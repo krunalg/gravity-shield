@@ -113,6 +113,20 @@ if [[ -f "$INSTALL_DIR/pihole-ai.service.tpl" ]]; then
         echo "✓ Sudoers rule created"
     fi
 
+    # Fix permissions on Pi-hole gravity.db
+    echo "Fixing permissions on /etc/pihole/gravity.db..."
+    if [[ -f "/etc/pihole/gravity.db" ]]; then
+        if command -v setfacl &> /dev/null; then
+            sudo setfacl -m u:"$SSH_USER":rw /etc/pihole/gravity.db
+            echo "✓ ACL permissions set"
+        else
+            sudo chmod o+rw /etc/pihole/gravity.db
+            echo "✓ File permissions set"
+        fi
+    else
+        echo "WARNING: /etc/pihole/gravity.db not found"
+    fi
+
     echo "Starting daemon..."
     sudo systemctl start "pihole-ai-$SSH_USER"
 fi
