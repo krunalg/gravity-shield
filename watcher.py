@@ -17,7 +17,7 @@ from state_db import StateDB
 
 logger = logging.getLogger(__name__)
 
-CLASSIFY_QUEUE_SIZE = 200
+CLASSIFY_QUEUE_SIZE = 500
 
 
 class ClassifierWorker(threading.Thread):
