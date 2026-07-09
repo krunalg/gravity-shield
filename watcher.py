@@ -53,6 +53,22 @@ class ClassifierWorker(threading.Thread):
                 self._queue.task_done()
 
     def _handle_domain(self, domain: str):
+        from features.extractor import extract
+        features = extract(domain)
+        rule_score = features["rules"]["rule_score"]
+
+        if rule_score < RULE_PREFILTER_THRESHOLD:
+            logger.debug(f"Pre-filter allow {domain} (rule_score={rule_score})")
+            self._state_db.log_classification(
+                domain=domain,
+                category="SAFE",
+                confidence=1.0,
+                reason=f"Rule pre-filter: score={rule_score} below threshold={RULE_PREFILTER_THRESHOLD}",
+                blocked=False,
+                features=features,
+            )
+            return
+
         result = self._classifier.classify(domain)
 
         self._state_db.log_classification(

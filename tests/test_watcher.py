@@ -68,23 +68,23 @@ def test_watcher_drops_domain_when_queue_full():
 def test_classifier_worker_classifies_and_blocks(tmp_path):
     from classifier import ClassificationResult
     clf = MagicMock()
+    # paypa1-secure.xyz: brand(paypal)=+25, suspicious TLD=+10 → rule_score=35, above prefilter
+    domain = "paypa1-secure.xyz"
     clf.classify.return_value = ClassificationResult(
-        "evil.xyz", "MALWARE", 0.95, "known malware", True
+        domain, "MALWARE", 0.95, "known malware", True
     )
     state = MagicMock()
     pihole = MagicMock()
     pihole.add_to_denylist.return_value = 1
 
     q = queue.Queue()
-    q.put("evil.xyz")
-
     worker = ClassifierWorker(classify_queue=q, classifier=clf,
                               state_db=state, pihole_client=pihole)
-    worker._handle_domain("evil.xyz")
+    worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with("evil.xyz")
+    clf.classify.assert_called_once_with(domain)
     state.log_classification.assert_called_once()
-    pihole.add_to_denylist.assert_called_once_with(["evil.xyz"], comment="AI:MALWARE:0.95")
+    pihole.add_to_denylist.assert_called_once_with([domain], comment="AI:MALWARE:0.95")
 
 
 def test_classifier_worker_allows_safe_domain():
@@ -99,7 +99,25 @@ def test_classifier_worker_allows_safe_domain():
     q = queue.Queue()
     worker = ClassifierWorker(classify_queue=q, classifier=clf,
                               state_db=state, pihole_client=pihole)
+    # safe.com scores 0 — pre-filtered without Ollama call
     worker._handle_domain("safe.com")
 
+    clf.classify.assert_not_called()
+    pihole.add_to_denylist.assert_not_called()
+    state.log_classification.assert_called_once()
+
+
+def test_classifier_worker_prefilter_skips_ollama_for_low_score_domain():
+    clf = MagicMock()
+    state = MagicMock()
+    pihole = MagicMock()
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    # bbc.co.uk scores 0 — well below RULE_PREFILTER_THRESHOLD
+    worker._handle_domain("bbc.co.uk")
+
+    clf.classify.assert_not_called()
     pihole.add_to_denylist.assert_not_called()
     state.log_classification.assert_called_once()

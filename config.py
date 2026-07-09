@@ -18,6 +18,7 @@ CATEGORIES_SAFE = {"AD", "TRACKER", "SAFE"}
 DGA_THRESHOLD = 0.70
 ENTROPY_THRESHOLD = 3.8
 RULE_SCORE_THRESHOLD = 70
+RULE_PREFILTER_THRESHOLD = 15  # skip Ollama if rule_score below this — auto-allow
 BRAND_MATCH_THRESHOLD = 0.80
 PUNYCODE_WEIGHT = 35
 HIGH_RISK_TLDS = {".ru", ".xyz", ".tk", ".pw", ".cc", ".top", ".click", ".info"}
