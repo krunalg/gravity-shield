@@ -61,12 +61,14 @@ class PiholeClient:
     def add_to_denylist(self, domains: list[str], comment: str = "pihole-ai") -> int:
         """Insert domains into Pi-hole denylist (type=1). Returns count actually inserted."""
         if not domains:
+            logger.debug("add_to_denylist called with empty domain list")
             return 0
         now = int(time.time())
         conn = sqlite3.connect(self._db_path)
         added = 0
         try:
             group_id = self._ensure_block_group(conn, now)
+            logger.debug(f"Block group id: {group_id}")
             for domain in domains:
                 domain = domain.lower()
                 if is_never_block_domain(domain):
@@ -78,18 +80,26 @@ class PiholeClient:
                            VALUES (?,1,1,?,?,?)""",
                         (domain, now, now, comment)
                     )
-                    self._assign_domain_to_group(conn, cur.lastrowid, group_id)
+                    domain_id = cur.lastrowid
+                    logger.debug(f"Inserted domain '{domain}' with id={domain_id}")
+                    self._assign_domain_to_group(conn, domain_id, group_id)
                     added += 1
                 except sqlite3.IntegrityError:
                     domain_id = self._domainlist_id(conn, domain)
+                    logger.debug(f"Domain '{domain}' already exists with id={domain_id}, assigning to group")
                     self._assign_domain_to_group(conn, domain_id, group_id)
             conn.commit()
+            logger.info(f"Denylist transaction committed: {added} new domains added")
+        except Exception as e:
+            logger.error(f"Error while adding domains to denylist: {e}")
         finally:
             conn.close()
 
         if added > 0:
-            logger.info(f"Added {added} domains to Pi-hole denylist")
+            logger.info(f"Successfully added {added} domains to Pi-hole denylist and assigned to group '{self._block_group_name}'")
             self._schedule_reload()
+        else:
+            logger.debug("No new domains were added to denylist")
         return added
 
     def flush_reload(self):
@@ -138,28 +148,48 @@ class PiholeClient:
             logger.error(f"Failed to reload Pi-hole: {e}")
 
     def _ensure_block_group(self, conn: sqlite3.Connection, now: int) -> Optional[int]:
-        if not self._table_exists(conn, "group") or not self._table_exists(conn, "domainlist_by_group"):
+        if not self._table_exists(conn, "group"):
+            logger.warning("'group' table not found in Pi-hole DB — group assignment skipped")
+            return None
+        if not self._table_exists(conn, "domainlist_by_group"):
+            logger.warning("'domainlist_by_group' table not found in Pi-hole DB — group assignment skipped")
             return None
         row = conn.execute('SELECT id FROM "group" WHERE name=?', (self._block_group_name,)).fetchone()
         if row:
-            return int(row[0])
-        cur = conn.execute(
-            'INSERT INTO "group" (enabled, name, date_added, date_modified, description) VALUES (1,?,?,?,?)',
-            (self._block_group_name, now, now, "Domains blocked by Pi-hole AI Guardian")
-        )
-        return int(cur.lastrowid)
+            group_id = int(row[0])
+            logger.debug(f"Found existing block group '{self._block_group_name}' with id={group_id}")
+            return group_id
+        try:
+            cur = conn.execute(
+                'INSERT INTO "group" (enabled, name, date_added, date_modified, description) VALUES (1,?,?,?,?)',
+                (self._block_group_name, now, now, "Domains blocked by Pi-hole AI Guardian")
+            )
+            group_id = int(cur.lastrowid)
+            logger.info(f"Created new block group '{self._block_group_name}' with id={group_id}")
+            return group_id
+        except Exception as e:
+            logger.error(f"Failed to create block group '{self._block_group_name}': {e}")
+            return None
 
     def _assign_domain_to_group(self, conn: sqlite3.Connection, domain_id: Optional[int], group_id: Optional[int]):
-        if domain_id is None or group_id is None:
+        if domain_id is None:
+            logger.debug("Skipping group assignment: domain_id is None")
             return
-        conn.execute(
-            "DELETE FROM domainlist_by_group WHERE domainlist_id=? AND group_id=0",
-            (domain_id,)
-        )
-        conn.execute(
-            "INSERT OR IGNORE INTO domainlist_by_group (domainlist_id, group_id) VALUES (?,?)",
-            (domain_id, group_id)
-        )
+        if group_id is None:
+            logger.debug("Skipping group assignment: group_id is None")
+            return
+        try:
+            conn.execute(
+                "DELETE FROM domainlist_by_group WHERE domainlist_id=? AND group_id=0",
+                (domain_id,)
+            )
+            conn.execute(
+                "INSERT OR IGNORE INTO domainlist_by_group (domainlist_id, group_id) VALUES (?,?)",
+                (domain_id, group_id)
+            )
+            logger.debug(f"Assigned domainlist_id={domain_id} to group_id={group_id}")
+        except Exception as e:
+            logger.error(f"Failed to assign domain {domain_id} to group {group_id}: {e}")
 
     def _domainlist_id(self, conn: sqlite3.Connection, domain: str) -> Optional[int]:
         row = conn.execute("SELECT id FROM domainlist WHERE domain=? AND type=1", (domain,)).fetchone()
