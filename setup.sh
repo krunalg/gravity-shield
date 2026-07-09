@@ -49,10 +49,14 @@ fi
 echo ""
 echo "Creating installation directory..."
 mkdir -p "$INSTALL_DIR/tests/fixtures" "$INSTALL_DIR/logs"
-cd "$INSTALL_DIR"
 
-echo "Installing dependencies via Make..."
-make install
+echo "Creating Python venv..."
+python3 -m venv "$INSTALL_DIR/.venv"
+
+echo "Installing dependencies..."
+"$INSTALL_DIR/.venv/bin/pip" install -q requests==2.32.3 watchdog==4.0.1 pytest
+
+cd "$INSTALL_DIR"
 
 # Generate config_local.py
 echo "Generating config_local.py..."
