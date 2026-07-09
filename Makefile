@@ -74,7 +74,9 @@ logs:
 
 reset: daemon-stop
 	@echo "Cleaning up old config and state..."
-	rm -f config_local.py state.db
+	@STATE_DB=$$(python3 -c "from config_local import STATE_DB_PATH; print(STATE_DB_PATH)" 2>/dev/null || echo "state.db"); \
+	rm -f "$$STATE_DB" && echo "Removed $$STATE_DB"
+	rm -f config_local.py
 	rm -rf logs/*
 	@echo "✓ Ready to re-setup"
 

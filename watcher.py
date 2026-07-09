@@ -62,7 +62,7 @@ class DomainWatcher(threading.Thread):
         if not domains:
             return
 
-        domains = [d for d in domains if not should_skip_classification(d)]
+        domains = list(dict.fromkeys(d for d in domains if not should_skip_classification(d)))
         new_domains = self._state_db.filter_unseen(domains)
 
         for domain in new_domains:
