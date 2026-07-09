@@ -51,12 +51,8 @@ echo "Creating installation directory..."
 mkdir -p "$INSTALL_DIR/tests/fixtures" "$INSTALL_DIR/logs"
 cd "$INSTALL_DIR"
 
-echo "Creating Python venv..."
-python3 -m venv .venv
-source .venv/bin/activate
-
-echo "Installing dependencies..."
-pip install -q requests==2.32.3 watchdog==4.0.1
+echo "Installing dependencies via Make..."
+make install
 
 # Generate config_local.py
 echo "Generating config_local.py..."
