@@ -91,8 +91,9 @@ class ThreatIntelSyncer(threading.Thread):
 
     def _verify_domains(self, domains: list[str], source: str, category: str) -> list[str]:
         if not self._classifier:
-            logger.warning(f"Feed {source}: classifier unavailable, refusing to auto-block {len(domains)} domains")
-            return []
+            # No classifier — trust the feed directly
+            logger.info(f"Feed {source}: classifier unavailable, trusting feed for {len(domains)} domains")
+            return domains
 
         verified = []
         for domain in domains:
@@ -112,8 +113,18 @@ class ThreatIntelSyncer(threading.Thread):
                 blocked=result.should_block,
                 features=result.features,
             )
-            if result.should_block:
+            # For threat intel feeds, trust category+confidence without risk_score gate.
+            # The feed itself is the verification; risk_score is for unknown DNS queries.
+            feed_verified = (
+                result.category in CATEGORIES_TO_BLOCK
+                and result.confidence >= BLOCK_CONFIDENCE_THRESHOLD
+            )
+            if feed_verified:
                 verified.append(domain)
+                logger.info(
+                    f"Feed {source}: verified {domain} "
+                    f"({result.category} {result.confidence:.0%})"
+                )
             else:
                 logger.info(
                     f"Feed {source}: skipped {domain} after model verification "
