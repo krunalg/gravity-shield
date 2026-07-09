@@ -55,8 +55,8 @@ $INSTALL_DIR/                 # e.g. /home/myuser/pihole-ai (configured at insta
 ├── watcher.py                # Tail FTL log, extract new domains, call classifier
 ├── syncer.py                 # Fetch threat intel feeds, bulk-insert new domains
 ├── daemon.py                 # Main entry: start watcher + syncer threads, handle signals
-├── requirements.txt          # requests, watchdog
-├── setup.sh                  # Interactive setup wizard (venv + config + systemd)
+├── Makefile                  # Build targets: install, test, setup, clean, daemon-*
+├── setup.sh                  # Interactive setup wizard (uses Make for install)
 ├── pihole-ai.service.tpl     # Systemd template (username + paths substituted at install)
 ├── logs/                     # Runtime logs (auto-created)
 └── tests/
@@ -147,8 +147,8 @@ echo "Creating Python venv..."
 python3 -m venv .venv
 source .venv/bin/activate
 
-echo "Installing dependencies..."
-pip install -q requests==2.32.3 watchdog==4.0.1
+echo "Installing dependencies via Make..."
+make install
 
 # Generate config_local.py
 echo "Generating config_local.py..."
@@ -190,7 +190,7 @@ if [[ ! -d .git ]]; then
     git init
     git config user.email "pihole-ai@localhost"
     git config user.name "Pi-hole AI Guardian"
-    git add requirements.txt setup.sh
+    git add Makefile setup.sh config_local.py
     git commit -m "Initial commit"
 fi
 
@@ -220,9 +220,10 @@ Expected: `config_local.py` created with substituted values, venv initialized, g
 
 **Files:**
 - Create: `config.py` (static defaults)
+- Create: `Makefile` (dependency installation + build targets)
 - Modify: import pattern in all later files
 
-**What this does:** Static configuration defaults. All files will do `from config_local import *` (user config) then fallback to `config` (defaults). This allows Task 0 setup to inject user-specific values.
+**What this does:** Static configuration defaults + Makefile for reproducible builds. All files will do `from config_local import *` (user config) then fallback to `config` (defaults). Makefile replaces pip/requirements.txt with targets for install, test, setup, clean, daemon management.
 
 - [ ] **Step 1: Create config.py**
 
