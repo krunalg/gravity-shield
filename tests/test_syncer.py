@@ -56,3 +56,32 @@ def test_syncer_does_not_block_when_classifier_is_unavailable():
     assert added == 0
     pihole.add_to_denylist.assert_not_called()
     state.bulk_mark_threat_domains.assert_not_called()
+
+
+def test_syncer_passes_feed_category_to_classifier_context():
+    state = MagicMock()
+    state.is_threat_domain_known.return_value = False
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+    classifier = _classifier_with_results([
+        ClassificationResult("phish.example", "PHISHING", 0.95, "known phish", True),
+    ])
+
+    syncer = ThreatIntelSyncer(
+        state_db=state,
+        pihole_client=pihole,
+        classifier=classifier,
+        feeds=[{"name": "OpenPhish", "url": "http://feed", "category": "PHISHING"}],
+    )
+
+    with patch("syncer.fetch_feed", return_value=["phish.example"]):
+        syncer._sync_one_feed(syncer._feeds[0])
+
+    classifier.classify.assert_called_once_with(
+        "phish.example",
+        threat_context={
+            "feed_source": "OpenPhish",
+            "ioc_category": "PHISHING",
+            "urlhaus_hit": False,
+        },
+    )

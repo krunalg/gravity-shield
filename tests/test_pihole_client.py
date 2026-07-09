@@ -108,6 +108,98 @@ def test_add_to_denylist_skips_never_block_domains(tmp_path):
     assert added == 1
     assert domains == ["evil.com"]
 
+def test_add_to_denylist_assigns_adaptive_threat_blocklist_group(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.execute("""CREATE TABLE "group" (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        enabled INTEGER NOT NULL,
+        name TEXT UNIQUE NOT NULL,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        description TEXT
+    )""")
+    conn.execute("""CREATE TABLE domainlist_by_group (
+        domainlist_id INTEGER NOT NULL,
+        group_id INTEGER NOT NULL,
+        UNIQUE(domainlist_id, group_id)
+    )""")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    assert client.add_to_denylist(["evil.com"], comment="AI:MALWARE:0.99") == 1
+
+    conn = sqlite3.connect(db_path)
+    row = conn.execute(
+        """SELECT d.domain, g.name
+           FROM domainlist d
+           JOIN domainlist_by_group dg ON dg.domainlist_id = d.id
+           JOIN "group" g ON g.id = dg.group_id"""
+    ).fetchone()
+    conn.close()
+
+    assert row == ("evil.com", "Adaptive Threat Blocklist")
+
+def test_existing_default_group_mapping_is_removed_for_adaptive_blocks(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.execute("""CREATE TABLE "group" (
+        id INTEGER PRIMARY KEY,
+        enabled INTEGER NOT NULL,
+        name TEXT UNIQUE NOT NULL,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        description TEXT
+    )""")
+    conn.execute("""CREATE TABLE domainlist_by_group (
+        domainlist_id INTEGER NOT NULL,
+        group_id INTEGER NOT NULL,
+        UNIQUE(domainlist_id, group_id)
+    )""")
+    conn.execute(
+        'INSERT INTO "group" (id, enabled, name, date_added, date_modified, description) VALUES (0,1,"Default",1,1,"")'
+    )
+    conn.execute(
+        "INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment) VALUES ('evil.com',1,1,1,1,'manual')"
+    )
+    conn.execute("INSERT INTO domainlist_by_group (domainlist_id, group_id) VALUES (1,0)")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    assert client.add_to_denylist(["evil.com"], comment="AI:MALWARE:0.99") == 0
+
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute(
+        """SELECT g.name
+           FROM domainlist_by_group dg
+           JOIN "group" g ON g.id = dg.group_id
+           WHERE dg.domainlist_id=1
+           ORDER BY g.id"""
+    ).fetchall()
+    conn.close()
+
+    assert [row[0] for row in rows] == ["Adaptive Threat Blocklist"]
+
 def test_add_to_denylist_can_reload_immediately_when_interval_disabled(tmp_path):
     db_path = str(tmp_path / "gravity.db")
     conn = sqlite3.connect(db_path)

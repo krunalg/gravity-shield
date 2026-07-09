@@ -74,7 +74,7 @@ class ThreatIntelSyncer(threading.Thread):
             self._state_db.log_sync_run(feed_name=name, domains_added=0, domains_skipped=skipped)
             return 0
 
-        verified_domains = self._verify_domains(new_domains, source=name)
+        verified_domains = self._verify_domains(new_domains, source=name, category=category)
         if not verified_domains:
             logger.info(f"Feed {name}: no domains passed model verification")
             self._state_db.log_sync_run(feed_name=name, domains_added=0, domains_skipped=skipped)
@@ -89,20 +89,28 @@ class ThreatIntelSyncer(threading.Thread):
         self._state_db.log_sync_run(feed_name=name, domains_added=added, domains_skipped=skipped)
         return added
 
-    def _verify_domains(self, domains: list[str], source: str) -> list[str]:
+    def _verify_domains(self, domains: list[str], source: str, category: str) -> list[str]:
         if not self._classifier:
             logger.warning(f"Feed {source}: classifier unavailable, refusing to auto-block {len(domains)} domains")
             return []
 
         verified = []
         for domain in domains:
-            result = self._classifier.classify(domain)
+            result = self._classifier.classify(
+                domain,
+                threat_context={
+                    "feed_source": source,
+                    "ioc_category": category,
+                    "urlhaus_hit": source.lower() == "urlhaus",
+                },
+            )
             self._state_db.log_classification(
                 domain=domain,
                 category=result.category,
                 confidence=result.confidence,
                 reason=f"Threat intel source {source}: {result.reason}",
                 blocked=result.should_block,
+                features=result.features,
             )
             if result.should_block:
                 verified.append(domain)

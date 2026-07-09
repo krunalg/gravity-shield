@@ -10,12 +10,16 @@ def _make_client(response_text: str):
     return mock
 
 def test_classify_malware_domain():
-    client = _make_client('{"category": "MALWARE", "confidence": 0.95, "reason": "C2 beacon pattern"}')
+    client = _make_client(
+        '{"classification": "MALWARE", "confidence": 0.95, "severity": "HIGH", '
+        '"risk_score": 91, "reasons": ["C2 beacon pattern"], "recommended_action": "BLOCK"}'
+    )
     clf = classifier.DomainClassifier(ollama_client=client)
     result = clf.classify("evil-c2-beacon.ru")
     assert result.category == "MALWARE"
     assert result.confidence == 0.95
     assert result.should_block is True
+    assert result.risk_score == 91
 
 def test_classify_safe_domain():
     client = _make_client('{"category": "SAFE", "confidence": 0.99, "reason": "Legitimate CDN"}')
@@ -25,7 +29,10 @@ def test_classify_safe_domain():
     assert result.should_block is False
 
 def test_classify_low_confidence_not_blocked():
-    client = _make_client('{"category": "MALWARE", "confidence": 0.60, "reason": "uncertain"}')
+    client = _make_client(
+        '{"classification": "MALWARE", "confidence": 0.60, "severity": "HIGH", '
+        '"risk_score": 91, "reasons": ["uncertain"], "recommended_action": "BLOCK"}'
+    )
     clf = classifier.DomainClassifier(ollama_client=client)
     result = clf.classify("maybe-bad.com")
     assert result.category == "MALWARE"
@@ -46,10 +53,24 @@ def test_classify_handles_none_response():
     assert result.should_block is False
 
 def test_classify_phishing_blocked():
-    client = _make_client('{"category": "PHISHING", "confidence": 0.88, "reason": "fake bank"}')
+    client = _make_client(
+        '{"classification": "PHISHING", "confidence": 0.88, "severity": "HIGH", '
+        '"risk_score": 90, "reasons": ["fake bank"], "recommended_action": "BLOCK"}'
+    )
     clf = classifier.DomainClassifier(ollama_client=client)
     result = clf.classify("secure-hdfc-login.xyz")
     assert result.should_block is True
+
+def test_recommended_allow_prevents_block_even_for_malware_category():
+    client = _make_client(
+        '{"classification": "MALWARE", "confidence": 0.99, "severity": "HIGH", '
+        '"risk_score": 100, "reasons": ["feed hit"], "recommended_action": "ALLOW"}'
+    )
+    clf = classifier.DomainClassifier(ollama_client=client)
+    result = clf.classify("important.example.com")
+
+    assert result.category == "MALWARE"
+    assert result.should_block is False
 
 def test_prompt_contains_domain():
     client = _make_client('{"category": "SAFE", "confidence": 0.9, "reason": "ok"}')
@@ -57,3 +78,5 @@ def test_prompt_contains_domain():
     clf.classify("targetdomain.com")
     prompt_sent = client.generate.call_args[0][0]
     assert "targetdomain.com" in prompt_sent
+    assert '"entropy"' in prompt_sent
+    assert '"rules"' in prompt_sent

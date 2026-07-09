@@ -11,6 +11,32 @@ OLLAMA_MAX_RETRIES = 2
 BLOCK_CONFIDENCE_THRESHOLD = 0.80
 CATEGORIES_TO_BLOCK = {"MALWARE", "PHISHING", "C2", "RANSOMWARE"}
 CATEGORIES_SAFE = {"AD", "TRACKER", "SAFE"}
+DGA_THRESHOLD = 0.70
+ENTROPY_THRESHOLD = 3.8
+RULE_SCORE_THRESHOLD = 70
+BRAND_MATCH_THRESHOLD = 0.80
+PUNYCODE_WEIGHT = 35
+HIGH_RISK_TLDS = {".ru", ".xyz", ".tk", ".pw", ".cc", ".top", ".click", ".info"}
+KNOWN_BRANDS = {
+    "google": "google.com",
+    "microsoft": "microsoft.com",
+    "apple": "apple.com",
+    "amazon": "amazon.com",
+    "paypal": "paypal.com",
+    "github": "github.com",
+    "cloudflare": "cloudflare.com",
+    "meta": "meta.com",
+    "facebook": "facebook.com",
+    "instagram": "instagram.com",
+    "whatsapp": "whatsapp.com",
+    "openai": "openai.com",
+    "hdfc": "hdfcbank.com",
+    "icici": "icicibank.com",
+    "sbi": "sbi.co.in",
+    "chase": "chase.com",
+    "wellsfargo": "wellsfargo.com",
+    "bankofamerica": "bankofamerica.com",
+}
 
 # Domains to never classify or block
 SKIP_DOMAINS = {
@@ -55,3 +81,4 @@ PIHOLE_DB_PATH = "/etc/pihole/gravity.db"
 FTL_LOG_PATH = "/var/log/pihole/pihole.log"
 PIHOLE_RELOAD_CMD = "sudo -n pihole reloadlists"
 PIHOLE_RELOAD_INTERVAL_SECONDS = 60
+PIHOLE_BLOCK_GROUP_NAME = "Adaptive Threat Blocklist"

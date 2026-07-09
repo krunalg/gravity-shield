@@ -6,6 +6,7 @@ except ImportError:
 
 import sqlite3
 import threading
+from contextlib import suppress
 from datetime import datetime
 
 
@@ -35,7 +36,15 @@ class StateDB:
                 confidence REAL NOT NULL,
                 reason TEXT,
                 blocked INTEGER NOT NULL DEFAULT 0,
-                classified_at TEXT NOT NULL
+                classified_at TEXT NOT NULL,
+                entropy REAL,
+                dga_score REAL,
+                rule_score INTEGER,
+                brand TEXT,
+                brand_confidence REAL,
+                tld TEXT,
+                tld_risk REAL,
+                is_punycode INTEGER
             );
             CREATE TABLE IF NOT EXISTS threat_domains (
                 domain TEXT PRIMARY KEY,
@@ -51,6 +60,27 @@ class StateDB:
             );
         """)
         conn.commit()
+        self._migrate_schema()
+
+    def _migrate_schema(self):
+        columns = {
+            row["name"] for row in self._conn().execute("PRAGMA table_info(classifications)")
+        }
+        additions = {
+            "entropy": "REAL",
+            "dga_score": "REAL",
+            "rule_score": "INTEGER",
+            "brand": "TEXT",
+            "brand_confidence": "REAL",
+            "tld": "TEXT",
+            "tld_risk": "REAL",
+            "is_punycode": "INTEGER",
+        }
+        for name, column_type in additions.items():
+            if name not in columns:
+                with suppress(sqlite3.OperationalError):
+                    self._conn().execute(f"ALTER TABLE classifications ADD COLUMN {name} {column_type}")
+        self._conn().commit()
 
     def is_domain_seen(self, domain: str) -> bool:
         cur = self._conn().execute(
@@ -77,15 +107,32 @@ class StateDB:
         return [d for d in domains if d not in seen]
 
     def log_classification(self, domain: str, category: str, confidence: float,
-                           reason: str, blocked: bool):
+                           reason: str, blocked: bool, features: dict = None):
+        feature_values = self._classification_feature_values(features or {})
         self._conn().execute(
             """INSERT INTO classifications
-               (domain, category, confidence, reason, blocked, classified_at)
-               VALUES (?,?,?,?,?,?)""",
+               (domain, category, confidence, reason, blocked, classified_at,
+                entropy, dga_score, rule_score, brand, brand_confidence, tld, tld_risk, is_punycode)
+               VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (domain, category, confidence, reason, int(blocked),
-             datetime.utcnow().isoformat())
+             datetime.utcnow().isoformat(), *feature_values)
         )
         self._conn().commit()
+
+    def _classification_feature_values(self, features: dict) -> tuple:
+        brand = features.get("brand", {})
+        tld = features.get("tld", {})
+        punycode = features.get("punycode", {})
+        return (
+            features.get("entropy", {}).get("shannon"),
+            features.get("dga_score"),
+            features.get("rules", {}).get("rule_score"),
+            brand.get("matched_brand"),
+            brand.get("confidence"),
+            tld.get("tld"),
+            tld.get("tld_risk"),
+            int(bool(punycode.get("is_punycode"))) if punycode else None,
+        )
 
     def get_recent_classifications(self, limit: int = 50) -> list[dict]:
         cur = self._conn().execute(

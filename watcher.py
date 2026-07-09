@@ -78,6 +78,7 @@ class DomainWatcher(threading.Thread):
             confidence=result.confidence,
             reason=result.reason,
             blocked=result.should_block,
+            features=result.features,
         )
 
         if result.should_block:

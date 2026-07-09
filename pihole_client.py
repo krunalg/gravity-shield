@@ -49,10 +49,12 @@ class PiholeClient:
     def __init__(self,
                  db_path: str = PIHOLE_DB_PATH,
                  reload_cmd: Optional[str] = PIHOLE_RELOAD_CMD,
-                 reload_interval_seconds: int = PIHOLE_RELOAD_INTERVAL_SECONDS):
+                 reload_interval_seconds: int = PIHOLE_RELOAD_INTERVAL_SECONDS,
+                 block_group_name: str = PIHOLE_BLOCK_GROUP_NAME):
         self._db_path = db_path
         self._reload_cmd = reload_cmd
         self._reload_interval_seconds = reload_interval_seconds
+        self._block_group_name = block_group_name
         self._reload_lock = threading.Lock()
         self._reload_timer: Optional[threading.Timer] = None
 
@@ -64,20 +66,23 @@ class PiholeClient:
         conn = sqlite3.connect(self._db_path)
         added = 0
         try:
+            group_id = self._ensure_block_group(conn, now)
             for domain in domains:
                 domain = domain.lower()
                 if is_never_block_domain(domain):
                     logger.info(f"Skipped never-block domain: {domain}")
                     continue
                 try:
-                    conn.execute(
+                    cur = conn.execute(
                         """INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment)
                            VALUES (?,1,1,?,?,?)""",
                         (domain, now, now, comment)
                     )
+                    self._assign_domain_to_group(conn, cur.lastrowid, group_id)
                     added += 1
                 except sqlite3.IntegrityError:
-                    pass
+                    domain_id = self._domainlist_id(conn, domain)
+                    self._assign_domain_to_group(conn, domain_id, group_id)
             conn.commit()
         finally:
             conn.close()
@@ -131,3 +136,38 @@ class PiholeClient:
                 logger.debug("Pi-hole lists reloaded")
         except Exception as e:
             logger.error(f"Failed to reload Pi-hole: {e}")
+
+    def _ensure_block_group(self, conn: sqlite3.Connection, now: int) -> Optional[int]:
+        if not self._table_exists(conn, "group") or not self._table_exists(conn, "domainlist_by_group"):
+            return None
+        row = conn.execute('SELECT id FROM "group" WHERE name=?', (self._block_group_name,)).fetchone()
+        if row:
+            return int(row[0])
+        cur = conn.execute(
+            'INSERT INTO "group" (enabled, name, date_added, date_modified, description) VALUES (1,?,?,?,?)',
+            (self._block_group_name, now, now, "Domains blocked by Pi-hole AI Guardian")
+        )
+        return int(cur.lastrowid)
+
+    def _assign_domain_to_group(self, conn: sqlite3.Connection, domain_id: Optional[int], group_id: Optional[int]):
+        if domain_id is None or group_id is None:
+            return
+        conn.execute(
+            "DELETE FROM domainlist_by_group WHERE domainlist_id=? AND group_id=0",
+            (domain_id,)
+        )
+        conn.execute(
+            "INSERT OR IGNORE INTO domainlist_by_group (domainlist_id, group_id) VALUES (?,?)",
+            (domain_id, group_id)
+        )
+
+    def _domainlist_id(self, conn: sqlite3.Connection, domain: str) -> Optional[int]:
+        row = conn.execute("SELECT id FROM domainlist WHERE domain=? AND type=1", (domain,)).fetchone()
+        return int(row[0]) if row else None
+
+    def _table_exists(self, conn: sqlite3.Connection, table: str) -> bool:
+        row = conn.execute(
+            "SELECT 1 FROM sqlite_master WHERE type='table' AND name=?",
+            (table,)
+        ).fetchone()
+        return row is not None
