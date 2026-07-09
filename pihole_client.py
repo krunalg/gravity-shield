@@ -64,9 +64,10 @@ class PiholeClient:
             logger.debug("add_to_denylist called with empty domain list")
             return 0
         now = int(time.time())
-        conn = sqlite3.connect(self._db_path)
         added = 0
+        conn = None
         try:
+            conn = sqlite3.connect(self._db_path)
             group_id = self._ensure_block_group(conn, now)
             logger.debug(f"Block group id: {group_id}")
             for domain in domains:
@@ -91,9 +92,10 @@ class PiholeClient:
             conn.commit()
             logger.info(f"Denylist transaction committed: {added} new domains added")
         except Exception as e:
-            logger.error(f"Error while adding domains to denylist: {e}")
+            logger.error(f"Error while adding domains to denylist: {e}", exc_info=True)
         finally:
-            conn.close()
+            if conn:
+                conn.close()
 
         if added > 0:
             logger.info(f"Successfully added {added} domains to Pi-hole denylist and assigned to group '{self._block_group_name}'")

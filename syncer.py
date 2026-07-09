@@ -9,6 +9,7 @@ import threading
 import time
 
 from classifier import DomainClassifier
+from features.extractor import extract
 from threat_intel import fetch_feed
 from pihole_client import PiholeClient
 from state_db import StateDB
@@ -49,8 +50,11 @@ class ThreatIntelSyncer(threading.Thread):
         logger.info("Starting threat intel sync cycle")
         total_added = 0
         for feed_cfg in self._feeds:
-            added = self._sync_one_feed(feed_cfg)
-            total_added += added
+            try:
+                added = self._sync_one_feed(feed_cfg)
+                total_added += added
+            except Exception as e:
+                logger.error(f"Feed {feed_cfg.get('name', feed_cfg.get('url'))}: unhandled error during sync: {e}", exc_info=True)
         logger.info(f"Threat intel sync complete — {total_added} new domains added across all feeds")
 
     def _sync_one_feed(self, feed_cfg: dict) -> int:
@@ -76,7 +80,7 @@ class ThreatIntelSyncer(threading.Thread):
 
         verified_domains = self._verify_domains(new_domains, source=name, category=category)
         if not verified_domains:
-            logger.info(f"Feed {name}: no domains passed model verification")
+            logger.info(f"Feed {name}: no domains passed rule verification")
             self._state_db.log_sync_run(feed_name=name, domains_added=0, domains_skipped=skipped)
             return 0
 
@@ -90,43 +94,40 @@ class ThreatIntelSyncer(threading.Thread):
         return added
 
     def _verify_domains(self, domains: list[str], source: str, category: str) -> list[str]:
-        if not self._classifier:
-            logger.warning(f"Feed {source}: classifier unavailable, skipping {len(domains)} domains (no verification possible)")
-            return []
-
+        """
+        Verify feed domains using deterministic feature extraction + rule scoring only.
+        Ollama is not used here — feed classification at scale (10k+ domains) is impractical
+        with a local LLM. Ollama is reserved for real-time DNS query classification in watcher.py.
+        """
+        is_urlhaus = source.lower() == "urlhaus"
+        threat_context = {
+            "feed_source": source,
+            "ioc_category": category,
+            "urlhaus_hit": is_urlhaus,
+        }
         verified = []
+        skipped_count = 0
         for domain in domains:
-            result = self._classifier.classify(
-                domain,
-                threat_context={
-                    "feed_source": source,
-                    "ioc_category": category,
-                    "urlhaus_hit": source.lower() == "urlhaus",
-                },
-            )
+            features = extract(domain, threat_context=threat_context)
+            rule_score = features["rules"]["rule_score"]
+            # URLhaus hit alone scores 100 — always passes.
+            # Other feeds: require RULE_SCORE_THRESHOLD.
+            passes = is_urlhaus or rule_score >= RULE_SCORE_THRESHOLD
             self._state_db.log_classification(
                 domain=domain,
-                category=result.category,
-                confidence=result.confidence,
-                reason=f"Threat intel source {source}: {result.reason}",
-                blocked=result.should_block,
-                features=result.features,
+                category=category,
+                confidence=1.0 if is_urlhaus else min(rule_score / 100, 1.0),
+                reason=f"Feed {source} rule-based: score={rule_score} urlhaus={is_urlhaus}",
+                blocked=passes,
+                features=features,
             )
-            # For threat intel feeds, trust category+confidence without risk_score gate.
-            # The feed itself is the verification; risk_score is for unknown DNS queries.
-            feed_verified = (
-                result.category in CATEGORIES_TO_BLOCK
-                and result.confidence >= BLOCK_CONFIDENCE_THRESHOLD
-            )
-            if feed_verified:
+            if passes:
                 verified.append(domain)
-                logger.info(
-                    f"Feed {source}: verified {domain} "
-                    f"({result.category} {result.confidence:.0%})"
-                )
             else:
-                logger.info(
-                    f"Feed {source}: skipped {domain} after model verification "
-                    f"({result.category} {result.confidence:.0%})"
-                )
+                skipped_count += 1
+                logger.debug(f"Feed {source}: rule-skipped {domain} (score={rule_score})")
+        logger.info(
+            f"Feed {source}: rule-verified {len(verified)} domains, "
+            f"rule-skipped {skipped_count} (score<{RULE_SCORE_THRESHOLD})"
+        )
         return verified
