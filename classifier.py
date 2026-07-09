@@ -119,13 +119,6 @@ class DomainClassifier:
             f"{'→ BLOCK' if should_block else '→ allow'} | {reason}"
         )
 
-        if category in CATEGORIES_TO_BLOCK:
-            logger.info(
-                f"BLOCK_CHECK {domain}: action_blocks={action_blocks} "
-                f"category_ok=True risk_score={risk_score} "
-                f"threshold={RULE_SCORE_THRESHOLD} should_block={should_block}"
-            )
-
         return ClassificationResult(
             domain=domain,
             category=category,
