@@ -113,22 +113,24 @@ if [[ -f "$INSTALL_DIR/pihole-ai.service.tpl" ]]; then
         echo "✓ Sudoers rule created"
     fi
 
-    # Fix permissions on Pi-hole directory and gravity.db
-    echo "Fixing permissions on /etc/pihole/..."
-    if [[ -d "/etc/pihole" ]]; then
-        if command -v setfacl &> /dev/null; then
-            sudo setfacl -m u:"$SSH_USER":rwx /etc/pihole/
-            if [[ -f "/etc/pihole/gravity.db" ]]; then
-                sudo setfacl -m u:"$SSH_USER":rw /etc/pihole/gravity.db
-            fi
-            echo "✓ ACL permissions set"
-        else
-            sudo chmod o+rx /etc/pihole/
-            sudo chmod o+rw /etc/pihole/gravity.db 2>/dev/null || true
-            echo "✓ File permissions set"
-        fi
+    # Fix permissions on Pi-hole directory and files
+    echo "Fixing permissions on Pi-hole..."
+    if command -v setfacl &> /dev/null; then
+        # Set ACLs on /etc/pihole directory and files
+        [[ -d "/etc/pihole" ]] && sudo setfacl -m u:"$SSH_USER":rwx /etc/pihole/
+        [[ -f "/etc/pihole/gravity.db" ]] && sudo setfacl -m u:"$SSH_USER":rw /etc/pihole/gravity.db
+        [[ -f "/etc/pihole/versions" ]] && sudo setfacl -m u:"$SSH_USER":rw /etc/pihole/versions
+        [[ -d "/var/log/pihole" ]] && sudo setfacl -m u:"$SSH_USER":rx /var/log/pihole/
+        [[ -f "/var/log/pihole/pihole.log" ]] && sudo setfacl -m u:"$SSH_USER":r /var/log/pihole/pihole.log
+        echo "✓ ACL permissions set"
     else
-        echo "WARNING: /etc/pihole directory not found"
+        # Fallback: use chmod
+        [[ -d "/etc/pihole" ]] && sudo chmod o+rx /etc/pihole/
+        [[ -f "/etc/pihole/gravity.db" ]] && sudo chmod o+rw /etc/pihole/gravity.db 2>/dev/null || true
+        [[ -f "/etc/pihole/versions" ]] && sudo chmod o+rw /etc/pihole/versions 2>/dev/null || true
+        [[ -d "/var/log/pihole" ]] && sudo chmod o+rx /var/log/pihole/ 2>/dev/null || true
+        [[ -f "/var/log/pihole/pihole.log" ]] && sudo chmod o+r /var/log/pihole/pihole.log 2>/dev/null || true
+        echo "✓ File permissions set"
     fi
 
     echo "Starting daemon..."
