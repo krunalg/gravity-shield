@@ -22,7 +22,7 @@ venv:
 	python3 -m venv $(VENV)
 
 install: venv
-	$(PIP) install -q requests==2.32.3 watchdog==4.0.1
+	$(PIP) install -q requests==2.32.3 watchdog==4.0.1 pytest
 
 test: install
 	$(PYTEST) tests/ -v
