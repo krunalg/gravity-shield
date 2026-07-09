@@ -119,6 +119,13 @@ class DomainClassifier:
             f"{'→ BLOCK' if should_block else '→ allow'} | {reason}"
         )
 
+        if not should_block and category in CATEGORIES_TO_BLOCK and confidence >= BLOCK_CONFIDENCE_THRESHOLD:
+            logger.debug(
+                f"Domain {domain} blocked by classifier but should_block=False: "
+                f"action_blocks={action_blocks} risk_score={risk_score} "
+                f"RULE_SCORE_THRESHOLD={RULE_SCORE_THRESHOLD}"
+            )
+
         return ClassificationResult(
             domain=domain,
             category=category,
