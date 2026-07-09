@@ -5,25 +5,32 @@ except ImportError:
     pass
 
 import logging
+import threading
 import time
-from typing import Optional
+from typing import Optional, Union
 
 import requests
 
 logger = logging.getLogger(__name__)
+
+_REQUEST_LOCK = threading.Lock()
 
 
 class OllamaClient:
     def __init__(self,
                  base_url: str = OLLAMA_BASE_URL,
                  model: str = OLLAMA_MODEL,
-                 timeout: int = OLLAMA_TIMEOUT,
-                 max_retries: int = OLLAMA_MAX_RETRIES):
+                 timeout: Union[int, tuple[int, int]] = (OLLAMA_CONNECT_TIMEOUT, OLLAMA_READ_TIMEOUT),
+                 max_retries: int = OLLAMA_MAX_RETRIES,
+                 num_predict: int = OLLAMA_NUM_PREDICT,
+                 temperature: float = OLLAMA_TEMPERATURE):
         self._base_url = base_url.rstrip("/")
         self._url = f"{self._base_url}/api/generate"
         self._model = model
         self._timeout = timeout
         self._max_retries = max_retries
+        self._num_predict = num_predict
+        self._temperature = temperature
 
     def generate(self, prompt: str) -> Optional[str]:
         """Send prompt to Ollama, return raw response text or None on failure."""
@@ -33,24 +40,47 @@ class OllamaClient:
             "prompt": prompt,
             "stream": True,
             "options": {
-                "temperature": 0.1,
-                "num_predict": 150,
+                "temperature": self._temperature,
+                "num_predict": self._num_predict,
             }
         }
         for attempt in range(self._max_retries):
             try:
-                resp = requests.post(self._url, json=payload, timeout=self._timeout, stream=True)
-                resp.raise_for_status()
-                full_response = ""
-                for line in resp.iter_lines():
-                    if line:
-                        chunk = json_module.loads(line)
-                        full_response += chunk.get("response", "")
-                        if chunk.get("done"):
-                            break
+                started = time.monotonic()
+                logger.debug(
+                    "Ollama request attempt %s/%s model=%s prompt_chars=%s timeout=%s",
+                    attempt + 1,
+                    self._max_retries,
+                    self._model,
+                    len(prompt),
+                    self._timeout,
+                )
+                with _REQUEST_LOCK:
+                    resp = requests.post(self._url, json=payload, timeout=self._timeout, stream=True)
+                    resp.raise_for_status()
+                    full_response = ""
+                    for line in resp.iter_lines():
+                        if line:
+                            chunk = json_module.loads(line)
+                            full_response += chunk.get("response", "")
+                            if chunk.get("done"):
+                                break
+                logger.debug(
+                    "Ollama response complete model=%s response_chars=%s elapsed=%.2fs",
+                    self._model,
+                    len(full_response),
+                    time.monotonic() - started,
+                )
                 return full_response
             except requests.exceptions.Timeout:
-                logger.warning(f"Ollama timeout on attempt {attempt + 1}")
+                logger.warning(
+                    "Ollama timeout on attempt %s/%s model=%s prompt_chars=%s timeout=%s",
+                    attempt + 1,
+                    self._max_retries,
+                    self._model,
+                    len(prompt),
+                    self._timeout,
+                )
             except requests.exceptions.ConnectionError:
                 logger.warning(f"Ollama connection error on attempt {attempt + 1}")
             except requests.exceptions.HTTPError as e:

@@ -30,6 +30,9 @@ def test_generate_passes_correct_payload():
         assert payload["model"] == "mymodel"
         assert payload["prompt"] == "my prompt"
         assert payload["stream"] is True
+        assert payload["options"]["temperature"] == 0.1
+        assert payload["options"]["num_predict"] == 256
+        assert call_kwargs[1]["timeout"] == (ollama_client.OLLAMA_CONNECT_TIMEOUT, ollama_client.OLLAMA_READ_TIMEOUT)
 
 def test_retries_on_connection_error():
     import requests as req
@@ -39,12 +42,14 @@ def test_retries_on_connection_error():
         assert result is None
         assert mock_post.call_count == 2
 
-def test_returns_none_on_timeout():
+def test_returns_none_on_timeout(caplog):
     import requests as req
     with patch("ollama_client.requests.post", side_effect=req.exceptions.Timeout):
         client = ollama_client.OllamaClient(base_url="http://localhost:11434", model="x", max_retries=1)
         result = client.generate("prompt")
         assert result is None
+    assert "Ollama timeout on attempt 1/1" in caplog.text
+    assert "prompt_chars=6" in caplog.text
 
 def test_logs_http_error_body(caplog):
     import requests as req
