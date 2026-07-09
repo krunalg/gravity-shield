@@ -11,6 +11,7 @@ except ImportError:
 
 import logging
 import os
+import queue
 import signal
 import sys
 import time
@@ -19,7 +20,7 @@ from state_db import StateDB
 from pihole_client import PiholeClient
 from ollama_client import OllamaClient
 from classifier import DomainClassifier
-from watcher import DomainWatcher
+from watcher import DomainWatcher, ClassifierWorker, CLASSIFY_QUEUE_SIZE
 from syncer import ThreatIntelSyncer
 
 
@@ -51,12 +52,17 @@ def main():
     pihole = PiholeClient()
     clf = DomainClassifier(ollama_client=ollama)
 
-    watcher = DomainWatcher(state_db=state, classifier=clf, pihole_client=pihole)
+    classify_queue = queue.Queue(maxsize=CLASSIFY_QUEUE_SIZE)
+
+    watcher = DomainWatcher(state_db=state, classify_queue=classify_queue)
+    worker = ClassifierWorker(classify_queue=classify_queue, classifier=clf,
+                              state_db=state, pihole_client=pihole)
     syncer = ThreatIntelSyncer(state_db=state, pihole_client=pihole, classifier=clf)
 
     def _shutdown(signum, frame):
         logger.info(f"Received signal {signum}, shutting down")
         watcher.stop()
+        worker.stop()
         syncer.stop()
         pihole.flush_reload()
         state.close()
@@ -66,15 +72,21 @@ def main():
     signal.signal(signal.SIGINT, _shutdown)
 
     watcher.start()
+    worker.start()
     syncer.start()
 
-    logger.info("Both workers started — daemon running")
+    logger.info(f"All workers started (classify queue size: {CLASSIFY_QUEUE_SIZE}) — daemon running")
     while True:
         time.sleep(60)
         if not watcher.is_alive():
             logger.error("DomainWatcher died — restarting")
-            watcher = DomainWatcher(state_db=state, classifier=clf, pihole_client=pihole)
+            watcher = DomainWatcher(state_db=state, classify_queue=classify_queue)
             watcher.start()
+        if not worker.is_alive():
+            logger.error("ClassifierWorker died — restarting")
+            worker = ClassifierWorker(classify_queue=classify_queue, classifier=clf,
+                                      state_db=state, pihole_client=pihole)
+            worker.start()
 
 
 if __name__ == "__main__":

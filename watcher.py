@@ -6,6 +6,7 @@ except ImportError:
 
 import logging
 import os
+import queue
 import threading
 import time
 
@@ -16,28 +17,84 @@ from state_db import StateDB
 
 logger = logging.getLogger(__name__)
 
+CLASSIFY_QUEUE_SIZE = 200
+
+
+class ClassifierWorker(threading.Thread):
+    """Consumes domains from the queue and classifies them one at a time via Ollama."""
+
+    def __init__(self,
+                 classify_queue: queue.Queue,
+                 classifier: DomainClassifier,
+                 state_db: StateDB,
+                 pihole_client: PiholeClient):
+        super().__init__(daemon=True, name="ClassifierWorker")
+        self._queue = classify_queue
+        self._classifier = classifier
+        self._state_db = state_db
+        self._pihole = pihole_client
+        self._stop_event = threading.Event()
+
+    def stop(self):
+        self._stop_event.set()
+
+    def run(self):
+        logger.info("ClassifierWorker started")
+        while not self._stop_event.is_set():
+            try:
+                domain = self._queue.get(timeout=1)
+            except queue.Empty:
+                continue
+            try:
+                self._handle_domain(domain)
+            except Exception as e:
+                logger.error(f"ClassifierWorker error for {domain}: {e}", exc_info=True)
+            finally:
+                self._queue.task_done()
+
+    def _handle_domain(self, domain: str):
+        result = self._classifier.classify(domain)
+
+        self._state_db.log_classification(
+            domain=domain,
+            category=result.category,
+            confidence=result.confidence,
+            reason=result.reason,
+            blocked=result.should_block,
+            features=result.features,
+        )
+
+        if result.should_block:
+            comment = f"AI:{result.category}:{result.confidence:.2f}"
+            added = self._pihole.add_to_denylist([domain], comment=comment)
+            if added:
+                logger.warning(
+                    f"AUTO-BLOCKED {domain} | {result.category} "
+                    f"({result.confidence:.0%}) | {result.reason}"
+                )
+
 
 class DomainWatcher(threading.Thread):
+    """Tails Pi-hole FTL log and enqueues new domains for classification."""
+
     def __init__(self,
                  state_db: StateDB,
-                 classifier: DomainClassifier,
-                 pihole_client: PiholeClient,
+                 classify_queue: queue.Queue,
                  log_path: str = FTL_LOG_PATH,
                  poll_interval: float = 2.0):
         super().__init__(daemon=True, name="DomainWatcher")
         self._state_db = state_db
-        self._classifier = classifier
-        self._pihole = pihole_client
+        self._queue = classify_queue
         self._log_path = log_path
         self._poll_interval = poll_interval
         self._stop_event = threading.Event()
 
+    def stop(self):
+        self._stop_event.set()
+
     def run(self):
         logger.info(f"DomainWatcher started, tailing {self._log_path}")
         self._tail_log()
-
-    def stop(self):
-        self._stop_event.set()
 
     def _tail_log(self):
         while not self._stop_event.is_set():
@@ -67,25 +124,8 @@ class DomainWatcher(threading.Thread):
 
         for domain in new_domains:
             self._state_db.mark_domain_seen(domain)
-            self._handle_domain(domain)
-
-    def _handle_domain(self, domain: str):
-        result = self._classifier.classify(domain)
-
-        self._state_db.log_classification(
-            domain=domain,
-            category=result.category,
-            confidence=result.confidence,
-            reason=result.reason,
-            blocked=result.should_block,
-            features=result.features,
-        )
-
-        if result.should_block:
-            comment = f"AI:{result.category}:{result.confidence:.2f}"
-            added = self._pihole.add_to_denylist([domain], comment=comment)
-            if added:
-                logger.warning(
-                    f"AUTO-BLOCKED {domain} | {result.category} "
-                    f"({result.confidence:.0%}) | {result.reason}"
-                )
+            try:
+                self._queue.put_nowait(domain)
+                logger.debug(f"Queued {domain} (queue size: {self._queue.qsize()})")
+            except queue.Full:
+                logger.warning(f"Classify queue full ({CLASSIFY_QUEUE_SIZE}), dropping {domain}")
