@@ -26,10 +26,11 @@ class OllamaClient:
 
     def generate(self, prompt: str) -> Optional[str]:
         """Send prompt to Ollama, return raw response text or None on failure."""
+        import json as json_module
         payload = {
             "model": self._model,
             "prompt": prompt,
-            "stream": False,
+            "stream": True,
             "options": {
                 "temperature": 0.1,
                 "num_predict": 150,
@@ -37,9 +38,16 @@ class OllamaClient:
         }
         for attempt in range(self._max_retries):
             try:
-                resp = requests.post(self._url, json=payload, timeout=self._timeout)
+                resp = requests.post(self._url, json=payload, timeout=self._timeout, stream=True)
                 resp.raise_for_status()
-                return resp.json().get("response", "")
+                full_response = ""
+                for line in resp.iter_lines():
+                    if line:
+                        chunk = json_module.loads(line)
+                        full_response += chunk.get("response", "")
+                        if chunk.get("done"):
+                            break
+                return full_response
             except requests.exceptions.Timeout:
                 logger.warning(f"Ollama timeout on attempt {attempt + 1}")
             except requests.exceptions.ConnectionError:
