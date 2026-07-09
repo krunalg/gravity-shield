@@ -3,11 +3,11 @@
 Pi-hole AI Guardian Daemon
 Combines real-time AI domain classification with threat intel sync.
 """
+from config import *
 try:
     from config_local import *
 except ImportError:
     pass
-from config import *
 
 import logging
 import os

@@ -1,8 +1,8 @@
+from config import *
 try:
     from config_local import *
 except ImportError:
     pass
-from config import *
 
 import json
 import logging

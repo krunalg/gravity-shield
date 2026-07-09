@@ -6,7 +6,10 @@ import ollama_client
 
 def _mock_response(text: str):
     mock = MagicMock()
-    mock.json.return_value = {"response": text}
+    mock.iter_lines.return_value = [
+        json.dumps({"response": text, "done": False}).encode(),
+        json.dumps({"response": "", "done": True}).encode(),
+    ]
     mock.raise_for_status = MagicMock()
     return mock
 
@@ -26,7 +29,7 @@ def test_generate_passes_correct_payload():
         payload = call_kwargs[1]["json"]
         assert payload["model"] == "mymodel"
         assert payload["prompt"] == "my prompt"
-        assert payload["stream"] is False
+        assert payload["stream"] is True
 
 def test_retries_on_connection_error():
     import requests as req
@@ -42,3 +45,22 @@ def test_returns_none_on_timeout():
         client = ollama_client.OllamaClient(base_url="http://localhost:11434", model="x", max_retries=1)
         result = client.generate("prompt")
         assert result is None
+
+def test_logs_http_error_body(caplog):
+    import requests as req
+
+    response = MagicMock()
+    response.status_code = 404
+    response.text = '{"error":"model not found"}'
+    error = req.exceptions.HTTPError("404 Client Error")
+    error.response = response
+
+    with patch("ollama_client.requests.post") as mock_post:
+        mock_post.return_value.raise_for_status.side_effect = error
+        client = ollama_client.OllamaClient(base_url="http://localhost:11434/", model="missing-model", max_retries=1)
+        result = client.generate("prompt")
+
+    assert result is None
+    assert "Ollama HTTP error 404" in caplog.text
+    assert "missing-model" in caplog.text
+    assert "model not found" in caplog.text

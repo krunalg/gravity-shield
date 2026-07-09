@@ -1,8 +1,8 @@
+from config import *
 try:
     from config_local import *
 except ImportError:
     pass
-from config import *
 
 import logging
 import time
@@ -19,7 +19,8 @@ class OllamaClient:
                  model: str = OLLAMA_MODEL,
                  timeout: int = OLLAMA_TIMEOUT,
                  max_retries: int = OLLAMA_MAX_RETRIES):
-        self._url = f"{base_url}/api/generate"
+        self._base_url = base_url.rstrip("/")
+        self._url = f"{self._base_url}/api/generate"
         self._model = model
         self._timeout = timeout
         self._max_retries = max_retries
@@ -52,6 +53,18 @@ class OllamaClient:
                 logger.warning(f"Ollama timeout on attempt {attempt + 1}")
             except requests.exceptions.ConnectionError:
                 logger.warning(f"Ollama connection error on attempt {attempt + 1}")
+            except requests.exceptions.HTTPError as e:
+                response = e.response
+                status = response.status_code if response is not None else "unknown"
+                body = response.text[:300] if response is not None else ""
+                logger.error(
+                    "Ollama HTTP error %s for model %s at %s: %s",
+                    status,
+                    self._model,
+                    self._url,
+                    body,
+                )
+                break
             except Exception as e:
                 logger.error(f"Ollama unexpected error: {e}")
                 break
@@ -62,10 +75,7 @@ class OllamaClient:
     def is_available(self) -> bool:
         """Health check — returns True if Ollama is running."""
         try:
-            resp = requests.get(
-                self._url.replace("/api/generate", "/"),
-                timeout=3
-            )
+            resp = requests.get(f"{self._base_url}/api/tags", timeout=3)
             return resp.status_code == 200
         except Exception:
             return False

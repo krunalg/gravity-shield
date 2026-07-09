@@ -3,7 +3,7 @@ import os
 
 # Ollama
 OLLAMA_BASE_URL = "http://localhost:11434"
-OLLAMA_MODEL = "granite3.3:2b"
+OLLAMA_MODEL = "granite4.1:3b"
 OLLAMA_TIMEOUT = 30
 OLLAMA_MAX_RETRIES = 2
 
