@@ -91,9 +91,8 @@ class ThreatIntelSyncer(threading.Thread):
 
     def _verify_domains(self, domains: list[str], source: str, category: str) -> list[str]:
         if not self._classifier:
-            # No classifier — trust the feed directly
-            logger.info(f"Feed {source}: classifier unavailable, trusting feed for {len(domains)} domains")
-            return domains
+            logger.warning(f"Feed {source}: classifier unavailable, skipping {len(domains)} domains (no verification possible)")
+            return []
 
         verified = []
         for domain in domains:
