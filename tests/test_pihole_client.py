@@ -1,0 +1,79 @@
+import os, sys, sqlite3, tempfile, pytest
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import pihole_client
+
+FIXTURE_LOG = os.path.join(os.path.dirname(__file__), "fixtures", "sample_ftl.log")
+
+def test_extract_domains_from_log_lines():
+    with open(FIXTURE_LOG) as f:
+        lines = f.readlines()
+    domains = pihole_client.extract_domains_from_lines(lines)
+    assert "google.com" in domains
+    assert "evil-malware.ru" in domains
+    assert "tracker.example.com" in domains
+    assert "suspiciousdomain.xyz" in domains
+
+def test_skip_ptr_queries():
+    with open(FIXTURE_LOG) as f:
+        lines = f.readlines()
+    domains = pihole_client.extract_domains_from_lines(lines)
+    assert not any(".in-addr.arpa" in d for d in domains)
+
+def test_skip_pihole_internal():
+    with open(FIXTURE_LOG) as f:
+        lines = f.readlines()
+    domains = pihole_client.extract_domains_from_lines(lines)
+    assert "pi.hole" not in domains
+
+def test_skip_resolver_arpa():
+    with open(FIXTURE_LOG) as f:
+        lines = f.readlines()
+    domains = pihole_client.extract_domains_from_lines(lines)
+    assert "_dns.resolver.arpa" not in domains
+
+def test_add_to_denylist(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    added = client.add_to_denylist(["evil.com", "bad.ru"], comment="AI:MALWARE:0.95")
+    assert added == 2
+
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute("SELECT domain FROM domainlist WHERE type=1")
+    domains = [r[0] for r in cur.fetchall()]
+    conn.close()
+    assert "evil.com" in domains
+    assert "bad.ru" in domains
+
+def test_add_duplicate_skipped(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    client.add_to_denylist(["evil.com"], comment="first")
+    added = client.add_to_denylist(["evil.com"], comment="duplicate")
+    assert added == 0

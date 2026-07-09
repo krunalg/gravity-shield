@@ -1,0 +1,45 @@
+import os, sys, tempfile, pytest
+sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
+
+import state_db
+
+@pytest.fixture
+def db(tmp_path):
+    path = str(tmp_path / "test_state.db")
+    db = state_db.StateDB(path)
+    yield db
+    db.close()
+
+def test_domain_not_seen_initially(db):
+    assert db.is_domain_seen("evil.com") is False
+
+def test_mark_domain_seen(db):
+    db.mark_domain_seen("evil.com")
+    assert db.is_domain_seen("evil.com") is True
+
+def test_log_classification(db):
+    db.log_classification("evil.com", "MALWARE", 0.95, "Looks like C2 beacon", blocked=True)
+    rows = db.get_recent_classifications(limit=10)
+    assert len(rows) == 1
+    assert rows[0]["domain"] == "evil.com"
+    assert rows[0]["category"] == "MALWARE"
+    assert rows[0]["blocked"] == 1
+
+def test_threat_domain_not_seen_initially(db):
+    assert db.is_threat_domain_known("badactor.ru") is False
+
+def test_mark_threat_domain_known(db):
+    db.mark_threat_domain_known("badactor.ru", feed="Feodo C2 Tracker")
+    assert db.is_threat_domain_known("badactor.ru") is True
+
+def test_log_sync_run(db):
+    db.log_sync_run(feed_name="URLhaus", domains_added=42, domains_skipped=100)
+    rows = db.get_sync_history(limit=5)
+    assert rows[0]["feed_name"] == "URLhaus"
+    assert rows[0]["domains_added"] == 42
+
+def test_batch_check_seen(db):
+    db.mark_domain_seen("a.com")
+    db.mark_domain_seen("b.com")
+    result = db.filter_unseen(["a.com", "b.com", "c.com"])
+    assert result == ["c.com"]

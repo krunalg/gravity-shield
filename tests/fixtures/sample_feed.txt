@@ -1,0 +1,13 @@
+# Feodo Tracker Botnet C2 IP Block List
+# Generated: 2026-07-09
+# Expires: 2026-07-10
+#
+# This blocklist contains domains of IPs hosting Feodo Botnet C2 servers
+# Do not use in production without whitelisting.
+#
+0.0.0.0 evilc2server.ru
+0.0.0.0 botnet-panel.xyz
+0.0.0.0 malware-drop.cc
+# this is a comment
+0.0.0.0 ransomware-c2.onion
+legitimate.com
