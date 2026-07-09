@@ -23,13 +23,7 @@ SKIP_TLDS = {".local", ".lan", ".arpa", ".internal"}
 # Threat intel feeds
 THREAT_INTEL_FEEDS = [
     {
-        "name": "Feodo C2 Tracker",
-        "url": "https://feodotracker.abuse.ch/downloads/domainblocklist.txt",
-        "comment_prefix": "#",
-        "category": "C2",
-    },
-    {
-        "name": "URLhaus Malware",
+        "name": "URLhaus",
         "url": "https://urlhaus.abuse.ch/downloads/hostfile/",
         "comment_prefix": "#",
         "category": "MALWARE",
@@ -58,3 +52,5 @@ STATE_DB_PATH = os.path.join(BASE_DIR, "state.db")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 PIHOLE_DB_PATH = "/etc/pihole/gravity.db"
 FTL_LOG_PATH = "/var/log/pihole/pihole.log"
+PIHOLE_RELOAD_CMD = "sudo -n pihole reloadlists"
+PIHOLE_RELOAD_INTERVAL_SECONDS = 60

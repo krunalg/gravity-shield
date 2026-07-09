@@ -52,12 +52,13 @@ def main():
     clf = DomainClassifier(ollama_client=ollama)
 
     watcher = DomainWatcher(state_db=state, classifier=clf, pihole_client=pihole)
-    syncer = ThreatIntelSyncer(state_db=state, pihole_client=pihole)
+    syncer = ThreatIntelSyncer(state_db=state, pihole_client=pihole, classifier=clf)
 
     def _shutdown(signum, frame):
         logger.info(f"Received signal {signum}, shutting down")
         watcher.stop()
         syncer.stop()
+        pihole.flush_reload()
         state.close()
         sys.exit(0)
 

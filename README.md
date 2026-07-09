@@ -5,7 +5,7 @@ Real-time AI-powered DNS domain classification + automated threat intelligence s
 ## What It Does
 
 - **Real-time Classifier:** Watches Pi-hole's FTL log, extracts new domains, classifies them via local Ollama/Granite3.3, auto-blocks malware/phishing/C2 with >80% confidence
-- **Threat Intel Syncer:** Fetches IOC feeds (Feodo, URLhaus, DigitalSide, OpenPhish) every 6 hours, deduplicates, bulk-inserts new malicious domains into Pi-hole denylist
+- **Threat Intel Syncer:** Fetches domain IOC feeds (URLhaus, DigitalSide, OpenPhish) every 6 hours, deduplicates, bulk-inserts new malicious domains into Pi-hole denylist
 - **Zero Cloud Dependency:** All processing local — Ollama runs on-device, no external APIs needed
 - **State Tracking:** SQLite DB tracks seen domains (avoid re-classifying) + classification history + sync logs
 
@@ -15,7 +15,7 @@ Real-time AI-powered DNS domain classification + automated threat intelligence s
 Pi-hole FTL log ──► DomainWatcher ──► Ollama Classifier ──► Auto-Block ──┐
                                                                            ▼
 Threat Intel Feeds ──► ThreatIntelSyncer ──► Dedup + Sync ──────────────► Pi-hole Denylist
-(Feodo, URLhaus, etc)          (every 6h)
+(URLhaus, OpenPhish, etc)      (every 6h)
 ```
 
 ## Getting Started

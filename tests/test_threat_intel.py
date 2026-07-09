@@ -3,6 +3,7 @@ from unittest.mock import patch, MagicMock
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 import threat_intel
+import config
 
 FIXTURE_FEED = os.path.join(os.path.dirname(__file__), "fixtures", "sample_feed.txt")
 
@@ -61,3 +62,10 @@ def test_fetch_feed_returns_empty_on_error():
         feed_cfg = {"url": "http://fake", "comment_prefix": "#", "is_url_list": False, "name": "test"}
         domains = threat_intel.fetch_feed(feed_cfg)
         assert domains == []
+
+def test_default_feeds_do_not_include_retired_feodo_domain_feed():
+    feed_urls = [feed["url"] for feed in config.THREAT_INTEL_FEEDS]
+    feed_names = [feed["name"] for feed in config.THREAT_INTEL_FEEDS]
+
+    assert "https://feodotracker.abuse.ch/downloads/domainblocklist.txt" not in feed_urls
+    assert "Feodo C2 Tracker" not in feed_names

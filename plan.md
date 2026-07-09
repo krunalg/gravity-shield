@@ -26,9 +26,8 @@
                     │                    │                 │
                     │              confidence > 0.8?       │
                     │                    │                 │
-  abuse.ch feeds ───►  ThreatIntelSync   ▼                │
+  domain IOC feeds ─►  ThreatIntelSync   ▼                │
   URLhaus           │       │       PiholeBlocker          │
-  Feodo C2          │       │            │                 │
   DigitalSide OSINT │       └────────────┘                │
   (every 6 hours)   │              │                       │
                     └──────────────┼───────────────────────┘
@@ -253,13 +252,7 @@ SKIP_TLDS = {".local", ".lan", ".arpa", ".internal"}
 # Threat intel feeds
 THREAT_INTEL_FEEDS = [
     {
-        "name": "Feodo C2 Tracker",
-        "url": "https://feodotracker.abuse.ch/downloads/domainblocklist.txt",
-        "comment_prefix": "#",
-        "category": "C2",
-    },
-    {
-        "name": "URLhaus Malware",
+        "name": "URLhaus",
         "url": "https://urlhaus.abuse.ch/downloads/hostfile/",
         "comment_prefix": "#",
         "category": "MALWARE",
@@ -455,8 +448,10 @@ sudo systemctl daemon-reload
 sudo systemctl enable pihole-ai-$SSH_USER
 
 # Allow user to write to gravity.db and run reloadlists
-SUDOERS_LINE="$SSH_USER ALL=(ALL) NOPASSWD: /usr/bin/pihole reloadlists, /usr/bin/pihole reloaddns"
-if ! sudo grep -qF "pihole reloadlists" /etc/sudoers.d/pihole-ai-$SSH_USER 2>/dev/null; then
+PIHOLE_CMD=$(command -v pihole || true)
+PIHOLE_CMD=${PIHOLE_CMD:-/usr/local/bin/pihole}
+SUDOERS_LINE="$SSH_USER ALL=(ALL) NOPASSWD: $PIHOLE_CMD reloadlists, $PIHOLE_CMD reloaddns"
+if ! sudo grep -qF "$SUDOERS_LINE" /etc/sudoers.d/pihole-ai-$SSH_USER 2>/dev/null; then
     echo "$SUDOERS_LINE" | sudo tee /etc/sudoers.d/pihole-ai-$SSH_USER > /dev/null
     sudo chmod 0440 /etc/sudoers.d/pihole-ai-$SSH_USER
     echo "✓ Sudoers rule created"

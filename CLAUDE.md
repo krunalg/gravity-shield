@@ -33,7 +33,7 @@ make clean       # Remove venv + caches
    - Logs all decisions to StateDB
 
 2. **ThreatIntelSyncer** (`syncer.py`) — Runs on 6-hour interval
-   - Fetches IOC feeds (Feodo, URLhaus, DigitalSide, OpenPhish)
+   - Fetches domain IOC feeds (URLhaus, DigitalSide, OpenPhish)
    - Parses domains (handles hosts-file format, plain lists, JSON)
    - Deduplicates against StateDB (don't re-insert known threats)
    - Bulk-inserts new domains into Pi-hole gravity.db denylist

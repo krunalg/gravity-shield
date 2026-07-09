@@ -31,6 +31,9 @@ OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}
 read -p "Ollama Model [granite3.3:2b]: " -r OLLAMA_MODEL
 OLLAMA_MODEL=${OLLAMA_MODEL:-granite3.3:2b}
 
+PIHOLE_CMD=$(command -v pihole || true)
+PIHOLE_CMD=${PIHOLE_CMD:-/usr/local/bin/pihole}
+
 echo ""
 echo "Configuration Summary:"
 echo "  SSH User: $SSH_USER"
@@ -77,6 +80,8 @@ STATE_DB_PATH = os.path.join(BASE_DIR, "state.db")
 LOG_DIR = os.path.join(BASE_DIR, "logs")
 PIHOLE_DB_PATH = "/etc/pihole/gravity.db"
 FTL_LOG_PATH = "/var/log/pihole/pihole.log"
+PIHOLE_RELOAD_CMD = "sudo -n PIHOLE_CMD_PLACEHOLDER reloadlists"
+PIHOLE_RELOAD_INTERVAL_SECONDS = 60
 
 # Override config defaults
 OLLAMA_BASE_URL = OLLAMA_URL
@@ -89,6 +94,7 @@ sed -i.bak "s|PIHOLE_PASSWORD_PLACEHOLDER|$PIHOLE_PASSWORD|g" config_local.py
 sed -i.bak "s|INSTALL_DIR_PLACEHOLDER|$INSTALL_DIR|g" config_local.py
 sed -i.bak "s|OLLAMA_URL_PLACEHOLDER|$OLLAMA_URL|g" config_local.py
 sed -i.bak "s|OLLAMA_MODEL_PLACEHOLDER|$OLLAMA_MODEL|g" config_local.py
+sed -i.bak "s|PIHOLE_CMD_PLACEHOLDER|$PIHOLE_CMD|g" config_local.py
 rm -f config_local.py.bak
 
 echo "✓ config_local.py created"
@@ -106,8 +112,8 @@ if [[ -f "$INSTALL_DIR/pihole-ai.service.tpl" ]]; then
     sudo systemctl enable "pihole-ai-$SSH_USER"
 
     # Allow user to write to gravity.db and run reloadlists
-    SUDOERS_LINE="$SSH_USER ALL=(ALL) NOPASSWD: /usr/bin/pihole reloadlists, /usr/bin/pihole reloaddns"
-    if ! sudo grep -qF "pihole reloadlists" "/etc/sudoers.d/pihole-ai-$SSH_USER" 2>/dev/null; then
+    SUDOERS_LINE="$SSH_USER ALL=(ALL) NOPASSWD: $PIHOLE_CMD reloadlists, $PIHOLE_CMD reloaddns"
+    if ! sudo grep -qF "$SUDOERS_LINE" "/etc/sudoers.d/pihole-ai-$SSH_USER" 2>/dev/null; then
         echo "$SUDOERS_LINE" | sudo tee "/etc/sudoers.d/pihole-ai-$SSH_USER" > /dev/null
         sudo chmod 0440 "/etc/sudoers.d/pihole-ai-$SSH_USER"
         echo "✓ Sudoers rule created"
