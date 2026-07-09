@@ -1,13 +1,13 @@
 # Pi-hole AI Guardian
 
-Local AI-assisted DNS threat classification and threat-intel sync for Pi-hole.
+Local AI-assisted DNS threat classification and threat-intel sync for Pi-hole, with no cloud dependency.
 
 ## What It Does
 
 - Watches Pi-hole DNS query logs in real time.
-- Extracts deterministic domain features before asking Granite to reason.
-- Verifies threat-intel feed hits with the same classifier before blocking.
-- Writes malicious domains to Pi-hole’s `Adaptive Threat Blocklist` group.
+- Extracts deterministic domain features before asking a local LLM to reason.
+- Syncs threat-intel feeds (URLhaus, OpenPhish) using rule-based scoring — fast, no LLM calls.
+- Writes malicious domains to Pi-hole's `Adaptive Threat Blocklist` group.
 - Batches Pi-hole list reloads instead of reloading after every insert.
 - Keeps a central never-block policy for critical/known-legitimate domains.
 
@@ -16,92 +16,123 @@ Local AI-assisted DNS threat classification and threat-intel sync for Pi-hole.
 ```text
 Pi-hole FTL log
   -> DomainWatcher
-  -> feature extraction
-  -> Granite reasoning via Ollama
-  -> structured verdict
+  -> deterministic feature extraction
+  -> local LLM reasoning via Ollama
+  -> structured verdict (JSON)
   -> Pi-hole gravity.db
   -> Adaptive Threat Blocklist group
 
 Threat feeds (URLhaus, OpenPhish)
-  -> ThreatIntelSyncer
-  -> dedupe
-  -> feature extraction + Granite verification
+  -> ThreatIntelSyncer (every 6h)
+  -> dedupe against state DB
+  -> deterministic feature extraction + rule scoring
   -> Pi-hole gravity.db
   -> Adaptive Threat Blocklist group
 ```
 
+The LLM is only used for real-time DNS query classification (one domain at a time, low volume). Threat-intel feeds use rule-based scoring because feeds can contain 40k+ entries — calling a local LLM per domain would take days.
+
 ## Requirements
 
-- Raspberry Pi with Pi-hole v6.4+
+- Raspberry Pi (or any Linux host) with Pi-hole v6.4+
 - Python 3.11+
 - GNU Make
-- Ollama with `granite4.1:3b`
+- [Ollama](https://ollama.com) with any compatible model
 
 ```bash
-ollama pull granite4.1:3b
+ollama pull granite4.1:3b   # or any model you prefer
 ollama serve
 ```
 
-## Install
+## Getting Started
 
 ```bash
-git clone <repo> pihole-ai
+git clone https://github.com/krunalg/gravity-shield.git pihole-ai
 cd pihole-ai
 make install
 make test
 make setup
 ```
 
-The setup wizard creates:
-- `.venv`
-- `config_local.py`
-- systemd service `pihole-ai-$USER`
-- sudoers rule for `pihole reloadlists`
-- permissions for Pi-hole DB/log access
+The interactive setup wizard prompts for:
+- Installation directory
+- SSH username (for file permission setup)
+- Ollama model name
+- Pi-hole paths
 
-## Verify
+It then creates:
+- `.venv` with all dependencies
+- `config_local.py` with your local overrides
+- systemd service `pihole-ai-$USER`
+- sudoers rule for passwordless `pihole reloadlists`
+- ACL permissions for Pi-hole DB and log access
+
+Start the daemon:
 
 ```bash
+make daemon-start
 make daemon-status
+```
+
+To update and restart:
+
+```bash
+git pull
+make daemon-stop
+make daemon-start
+```
+
+To fully reset and re-run setup:
+
+```bash
+make re-setup
+```
+
+## Verify It's Working
+
+```bash
 make logs
 ```
 
-Check recent classifications:
+Check recent classifications in state DB:
 
 ```bash
 sqlite3 state.db \
   "SELECT domain, category, confidence, rule_score, blocked FROM classifications ORDER BY classified_at DESC LIMIT 20"
 ```
 
-Check Pi-hole blocks:
+Check domains added to Pi-hole:
 
 ```bash
 sudo sqlite3 /etc/pihole/gravity.db \
   "SELECT domain, comment FROM domainlist WHERE comment LIKE 'AI:%' OR comment LIKE 'TI:%' LIMIT 20"
 ```
 
-Check the block group:
+Check group assignment:
 
 ```bash
 sudo sqlite3 /etc/pihole/gravity.db \
-  "SELECT id, name FROM \"group\" WHERE name='Adaptive Threat Blocklist'"
+  "SELECT d.domain, g.name FROM domainlist d
+   JOIN domainlist_by_group dg ON dg.domainlist_id=d.id
+   JOIN \"group\" g ON g.id=dg.group_id
+   WHERE g.name='Adaptive Threat Blocklist' LIMIT 20"
 ```
 
 ## Classification Flow
 
-The classifier no longer sends only the raw domain to Granite. It first builds structured evidence:
+Feature extraction runs deterministically before the LLM sees the domain:
 
-- lexical metrics
+- lexical metrics (length, label count, vowel/consonant ratio, dictionary words)
 - Shannon entropy
 - digit and hyphen metrics
-- punycode/homograph signal
+- punycode / homograph signal
 - TLD risk
-- brand similarity
-- DGA score
+- brand similarity (Levenshtein + leet-decode)
+- DGA score heuristic
 - rule score and deterministic reasons
 - threat-intel context when available
 
-Granite returns JSON:
+The LLM receives this structured evidence as JSON and returns:
 
 ```json
 {
@@ -114,19 +145,17 @@ Granite returns JSON:
 }
 ```
 
-A domain is blocked only when action/category, confidence, and rule score pass configured thresholds.
+A domain is blocked only when action/category, confidence, and rule score all pass configured thresholds.
 
 ## Pi-hole Group Behavior
 
 Every newly blocked domain is mapped to:
 
-```text
+```
 Adaptive Threat Blocklist
 ```
 
-`PiholeClient` creates the group when Pi-hole group tables are present and inserts mappings into `domainlist_by_group`.
-
-Existing historical entries are not automatically migrated.
+`PiholeClient` creates the group if it doesn't exist and inserts mappings into `domainlist_by_group`. Make sure this group is assigned to your Pi-hole clients in the Pi-hole admin interface for blocks to take effect.
 
 ## Reload Behavior
 
@@ -136,27 +165,27 @@ Domains are written to `gravity.db` immediately, but Pi-hole reloads are batched
 PIHOLE_RELOAD_INTERVAL_SECONDS = 60
 ```
 
-Set it to `0` in `config_local.py` to reload immediately.
+Set it to `0` in `config_local.py` to reload immediately after each insert.
 
 ## Never-Block Policy
 
-Protected domains and suffixes are configured in:
+Domains and suffixes configured in `config.py`:
 
 ```python
 NEVER_BLOCK_DOMAINS
 NEVER_BLOCK_SUFFIXES
 ```
 
-This policy is enforced at the final Pi-hole insert layer, so even a mistaken classifier or feed result cannot insert protected domains.
+This policy is enforced at the final Pi-hole insert layer — no classifier or feed result can insert protected domains.
 
 ## Configuration
 
-Defaults live in `config.py`; local overrides live in `config_local.py`.
+Defaults in `config.py`; local overrides in `config_local.py` (generated by `make setup`).
 
-Important settings:
+Key settings:
 
 ```python
-OLLAMA_MODEL = "granite4.1:3b"
+OLLAMA_MODEL = "granite4.1:3b"       # swap to any Ollama model
 BLOCK_CONFIDENCE_THRESHOLD = 0.80
 RULE_SCORE_THRESHOLD = 70
 DGA_THRESHOLD = 0.70
@@ -167,30 +196,47 @@ PIHOLE_BLOCK_GROUP_NAME = "Adaptive Threat Blocklist"
 PIHOLE_RELOAD_INTERVAL_SECONDS = 60
 ```
 
+## Makefile Targets
+
+| Target | Description |
+|---|---|
+| `make install` | Create `.venv` and install dependencies |
+| `make test` | Run test suite |
+| `make setup` | Interactive setup wizard |
+| `make reset` | Stop daemon, delete `config_local.py`, `state.db`, logs |
+| `make re-setup` | `reset` then `setup` |
+| `make daemon-start` | Start systemd service |
+| `make daemon-stop` | Stop systemd service |
+| `make daemon-status` | Show service status |
+| `make daemon-restart` | Restart service |
+| `make logs` | Tail daemon log |
+| `make clean` | Remove `.venv` and `__pycache__` |
+| `make help` | Show all targets |
+
 ## Tests
 
 ```bash
 make test
 ```
 
-Current suite: 44 tests. All external services are mocked.
+Current suite: 50 tests. All external services (Ollama, Pi-hole, threat feeds) are mocked.
 
 ## Project Structure
 
 ```text
-config.py
-config_local.py
-daemon.py
-watcher.py
-syncer.py
-classifier.py
-ollama_client.py
-pihole_client.py
-state_db.py
-threat_intel.py
-domain_policy.py
+config.py            static defaults
+config_local.py      generated by setup (gitignored)
+daemon.py            main entry point, starts both threads
+watcher.py           tails FTL log, real-time classification
+syncer.py            threat-intel feed sync (rule-based)
+classifier.py        LLM reasoning via Ollama
+ollama_client.py     Ollama HTTP wrapper (streaming NDJSON)
+pihole_client.py     gravity.db writer, group assignment, reload batching
+state_db.py          classification history and threat domain deduplication
+threat_intel.py      feed fetchers and parsers
+domain_policy.py     never-block policy
 features/
-  extractor.py
+  extractor.py       single entry point — orchestrates all detectors
   lexical.py
   entropy.py
   digits.py
@@ -205,29 +251,48 @@ tests/
 
 ## Troubleshooting
 
-Ollama:
+**Ollama not responding:**
 
 ```bash
 curl http://localhost:11434/api/tags
 ollama list
 ```
 
-Daemon:
+**Daemon not starting:**
 
 ```bash
 sudo systemctl status pihole-ai-$USER
 sudo journalctl -u pihole-ai-$USER -n 100
 ```
 
-Reload permission:
+**Domains not appearing in Pi-hole:**
 
 ```bash
+# Check gravity.db directly
+sudo sqlite3 /etc/pihole/gravity.db \
+  "SELECT domain, comment FROM domainlist WHERE comment LIKE 'TI:%' LIMIT 10"
+
+# Check reload ran
 sudo -n pihole reloadlists
 ```
 
-State DB:
+**Sync history:**
 
 ```bash
 sqlite3 state.db "SELECT * FROM sync_log ORDER BY synced_at DESC LIMIT 10"
-sqlite3 state.db "SELECT * FROM classifications ORDER BY classified_at DESC LIMIT 5"
 ```
+
+## Contributing
+
+1. Fork the repo and create a feature branch.
+2. Add or update tests — `make test` must pass with no failures.
+3. Keep all thresholds and tunables in `config.py`.
+4. Never bypass `PiholeClient` for Pi-hole writes.
+5. Never call Ollama from `syncer.py` — rule-based scoring only for feeds.
+6. Open a pull request with a clear description of the change and why.
+
+No cloud APIs, no telemetry, no hardcoded paths.
+
+## License
+
+MIT License. See [LICENSE](LICENSE) for details.

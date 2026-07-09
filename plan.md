@@ -23,7 +23,7 @@ Threat-intel feed hit
   -> ThreatIntelSyncer
   -> dedupe against StateDB
   -> features.extractor.extract(threat_context=...)
-  -> DomainClassifier verification
+  -> rule-based scoring only (no Ollama)
   -> PiholeClient
   -> Adaptive Threat Blocklist group
 ```
@@ -104,6 +104,18 @@ Set `PIHOLE_RELOAD_INTERVAL_SECONDS = 0` to reload immediately.
 
 On daemon shutdown, any pending reload is flushed.
 
+## Threat Intel Verification
+
+Feed domains are verified using deterministic feature extraction + rule scoring only. Ollama is **not** called for feed domains.
+
+Rationale: URLhaus contains 40k+ entries. Running each through a local LLM at ~90s/call would take days per sync cycle. Rule-based verification is sufficient because:
+
+- URLhaus domains receive `urlhaus_hit=True` in `threat_context`, which sets `rule_score = 100` → always passes.
+- OpenPhish domains are scored by lexical features, entropy, TLD risk, and DGA heuristics.
+- Domains scoring below `RULE_SCORE_THRESHOLD` are skipped.
+
+Ollama is reserved for real-time DNS query classification in `watcher.py` (one domain at a time, low volume).
+
 ## Threat Feeds
 
 Current default feeds:
@@ -181,7 +193,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 44 tests.
+Current suite: 50 tests.
 
 Covered areas:
 
@@ -192,7 +204,8 @@ Covered areas:
 - never-block final guard
 - reload batching
 - threat-intel parsing
-- threat-intel verification before blocking
+- threat-intel rule-based verification (URLhaus always passes, low-score domains skipped)
+- feed error isolation (one bad feed does not crash the sync cycle)
 - watcher skip policy
 - state DB persistence/migration
 - Ollama HTTP wrapper

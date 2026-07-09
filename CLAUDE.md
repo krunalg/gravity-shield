@@ -4,7 +4,7 @@
 
 Pi-hole AI Guardian: local DNS threat classification and threat-intel sync daemon for Raspberry Pi running Pi-hole and Ollama.
 
-**Tech Stack:** Python 3.11, sqlite3, requests, watchdog, Ollama (`granite4.1:3b`), systemd
+**Tech Stack:** Python 3.11, sqlite3, requests, watchdog, Ollama (local LLM, default `granite4.1:3b`), systemd
 
 **Key Locations:**
 - Main code: `*.py` files in root
@@ -36,7 +36,8 @@ make clean
 - Fetches domain IOC feeds every 6 hours.
 - Current default feeds: URLhaus and OpenPhish.
 - Deduplicates known feed domains.
-- Verifies every new feed domain through `DomainClassifier` before blocking.
+- Verifies feed domains using **rule-based scoring only** (no Ollama). URLhaus domains receive `urlhaus_hit=True` → rule_score=100 → always pass. OpenPhish domains scored by lexical/entropy/TLD/DGA features.
+- Ollama is not used for feed verification — feeds can have 40k+ entries, making LLM calls impractical.
 - Logs feed syncs and classification decisions.
 
 **Feature Extraction** (`features/`)
@@ -45,9 +46,10 @@ make clean
 - Granite receives structured evidence and should reason over it, not calculate features itself.
 
 **Classifier** (`classifier.py`)
-- Sends structured evidence JSON to Ollama.
+- Sends structured feature evidence JSON to the local LLM via Ollama.
 - Expects JSON with `classification`, `confidence`, `severity`, `risk_score`, `reasons`, and `recommended_action`.
 - Blocks only when action/category, confidence, and rule score pass configured thresholds.
+- Only used by `watcher.py` (real-time DNS queries). `syncer.py` uses rule-based scoring instead.
 
 **Pi-hole Writes** (`pihole_client.py`)
 - Writes blocked domains to `gravity.db`.
@@ -61,7 +63,7 @@ make clean
 `config.py` contains defaults; `config_local.py` overrides local paths and runtime values.
 
 Important settings:
-- `OLLAMA_MODEL`
+- `OLLAMA_MODEL` (default: `granite4.1:3b`, any Ollama-compatible model)
 - `BLOCK_CONFIDENCE_THRESHOLD`
 - `RULE_SCORE_THRESHOLD`
 - `DGA_THRESHOLD`
