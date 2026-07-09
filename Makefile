@@ -8,14 +8,21 @@ PYTEST := $(VENV)/bin/pytest
 help:
 	@echo "Pi-hole AI Guardian - Makefile targets:"
 	@echo ""
-	@echo "  make install         Install dependencies in venv"
-	@echo "  make test            Run full test suite"
-	@echo "  make setup           Run interactive setup wizard"
-	@echo "  make daemon-start    Start systemd daemon"
-	@echo "  make daemon-stop     Stop systemd daemon"
-	@echo "  make daemon-status   Check daemon status"
-	@echo "  make logs            Tail daemon logs"
-	@echo "  make clean           Remove venv and caches"
+	@echo "  Setup & Install:"
+	@echo "    make install         Install dependencies in venv"
+	@echo "    make test            Run full test suite"
+	@echo "    make setup           Run interactive setup wizard"
+	@echo ""
+	@echo "  Daemon Management:"
+	@echo "    make daemon-start    Start systemd daemon"
+	@echo "    make daemon-stop     Stop systemd daemon"
+	@echo "    make daemon-status   Check daemon status"
+	@echo "    make logs            Tail daemon logs"
+	@echo ""
+	@echo "  Reset & Cleanup:"
+	@echo "    make reset           Stop daemon, clean config/state/logs"
+	@echo "    make re-setup        Reset and run setup wizard"
+	@echo "    make clean           Remove venv and caches"
 	@echo ""
 
 venv:
@@ -64,3 +71,13 @@ logs:
 	fi
 	@INSTALL_DIR=$$(python3 -c "from config_local import INSTALL_DIR; print(INSTALL_DIR)"); \
 	tail -f $$INSTALL_DIR/logs/pihole-ai.log
+
+reset: daemon-stop
+	@echo "Cleaning up old config and state..."
+	rm -f config_local.py state.db
+	rm -rf logs/*
+	@echo "✓ Ready to re-setup"
+
+re-setup: reset
+	@echo "Running setup wizard..."
+	make setup
