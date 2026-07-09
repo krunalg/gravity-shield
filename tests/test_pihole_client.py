@@ -79,6 +79,35 @@ def test_add_duplicate_skipped(tmp_path):
     added = client.add_to_denylist(["evil.com"], comment="duplicate")
     assert added == 0
 
+def test_add_to_denylist_skips_never_block_domains(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    added = client.add_to_denylist(
+        ["instagram.c10r.instagram.com", "graph.facebook.com", "evil.com"],
+        comment="AI:MALWARE:0.99",
+    )
+
+    conn = sqlite3.connect(db_path)
+    cur = conn.execute("SELECT domain FROM domainlist")
+    domains = [r[0] for r in cur.fetchall()]
+    conn.close()
+
+    assert added == 1
+    assert domains == ["evil.com"]
+
 def test_add_to_denylist_can_reload_immediately_when_interval_disabled(tmp_path):
     db_path = str(tmp_path / "gravity.db")
     conn = sqlite3.connect(db_path)

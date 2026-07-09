@@ -69,3 +69,10 @@ def test_default_feeds_do_not_include_retired_feodo_domain_feed():
 
     assert "https://feodotracker.abuse.ch/downloads/domainblocklist.txt" not in feed_urls
     assert "Feodo C2 Tracker" not in feed_names
+
+def test_default_feeds_do_not_include_unresolvable_digitalside_feed():
+    feed_urls = [feed["url"] for feed in config.THREAT_INTEL_FEEDS]
+    feed_names = [feed["name"] for feed in config.THREAT_INTEL_FEEDS]
+
+    assert "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt" not in feed_urls
+    assert "DigitalSide OSINT" not in feed_names

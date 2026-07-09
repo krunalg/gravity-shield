@@ -5,7 +5,7 @@ Real-time AI-powered DNS domain classification + automated threat intelligence s
 ## What It Does
 
 - **Real-time Classifier:** Watches Pi-hole's FTL log, extracts new domains, classifies them via local Ollama/Granite3.3, auto-blocks malware/phishing/C2 with >80% confidence
-- **Threat Intel Syncer:** Fetches domain IOC feeds (URLhaus, DigitalSide, OpenPhish) every 6 hours, deduplicates, bulk-inserts new malicious domains into Pi-hole denylist
+- **Threat Intel Syncer:** Fetches domain IOC feeds (URLhaus, OpenPhish) every 6 hours, deduplicates, verifies, and inserts new malicious domains into Pi-hole denylist
 - **Zero Cloud Dependency:** All processing local — Ollama runs on-device, no external APIs needed
 - **State Tracking:** SQLite DB tracks seen domains (avoid re-classifying) + classification history + sync logs
 
@@ -24,9 +24,9 @@ Threat Intel Feeds ──► ThreatIntelSyncer ──► Dedup + Sync ───�
 
 Before installing, verify:
 - **Raspberry Pi** with Pi-hole v6.4+ running
-- **Ollama** installed with `granite3.3:2b` model already pulled
+- **Ollama** installed with `granite4.1:3b` model already pulled
   ```bash
-  ollama pull granite3.3:2b
+  ollama pull granite4.1:3b
   ollama serve  # Verify running on localhost:11434
   ```
 - **Python 3.11+** installed
@@ -66,7 +66,7 @@ The wizard will prompt you for:
 | Pi-hole Admin Password | (none) | `spider123#` |
 | Installation directory | `$HOME/pihole-ai` | `/home/krunal/pihole-ai` |
 | Ollama API URL | `http://localhost:11434` | `http://localhost:11434` |
-| Ollama Model | `granite3.3:2b` | `granite3.3:2b` |
+| Ollama Model | `granite4.1:3b` | `granite4.1:3b` |
 
 After confirming, the wizard will:
 1. Create Python virtual environment

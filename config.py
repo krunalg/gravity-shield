@@ -12,12 +12,19 @@ BLOCK_CONFIDENCE_THRESHOLD = 0.80
 CATEGORIES_TO_BLOCK = {"MALWARE", "PHISHING", "C2", "RANSOMWARE"}
 CATEGORIES_SAFE = {"AD", "TRACKER", "SAFE"}
 
-# Domains to never classify
+# Domains to never classify or block
 SKIP_DOMAINS = {
     "pi.hole", "localhost", "local", "lan",
     "google.com", "cloudflare.com", "apple.com",
     "microsoft.com", "github.com",
+    "instagram.c10r.instagram.com",
 }
+SKIP_DOMAIN_SUFFIXES = {
+    ".facebook.com", ".fbcdn.net", ".instagram.com",
+    ".messenger.com", ".meta.com", ".whatsapp.com",
+}
+NEVER_BLOCK_DOMAINS = SKIP_DOMAINS
+NEVER_BLOCK_SUFFIXES = SKIP_DOMAIN_SUFFIXES
 SKIP_TLDS = {".local", ".lan", ".arpa", ".internal"}
 
 # Threat intel feeds
@@ -25,12 +32,6 @@ THREAT_INTEL_FEEDS = [
     {
         "name": "URLhaus",
         "url": "https://urlhaus.abuse.ch/downloads/hostfile/",
-        "comment_prefix": "#",
-        "category": "MALWARE",
-    },
-    {
-        "name": "DigitalSide OSINT",
-        "url": "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt",
         "comment_prefix": "#",
         "category": "MALWARE",
     },

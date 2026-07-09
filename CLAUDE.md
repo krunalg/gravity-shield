@@ -4,7 +4,7 @@
 
 Pi-hole AI Guardian: Real-time AI domain classifier + threat intel auto-sync daemon running on Raspberry Pi with Ollama.
 
-**Tech Stack:** Python 3.11, sqlite3, requests, watchdog, Ollama (granite3.3:2b), systemd
+**Tech Stack:** Python 3.11, sqlite3, requests, watchdog, Ollama (granite4.1:3b), systemd
 
 **Key Locations:**
 - Main code: `*.py` files in root
@@ -33,7 +33,7 @@ make clean       # Remove venv + caches
    - Logs all decisions to StateDB
 
 2. **ThreatIntelSyncer** (`syncer.py`) — Runs on 6-hour interval
-   - Fetches domain IOC feeds (URLhaus, DigitalSide, OpenPhish)
+   - Fetches domain IOC feeds (URLhaus, OpenPhish)
    - Parses domains (handles hosts-file format, plain lists, JSON)
    - Deduplicates against StateDB (don't re-insert known threats)
    - Bulk-inserts new domains into Pi-hole gravity.db denylist

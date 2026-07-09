@@ -6,7 +6,7 @@
 
 **Architecture:** A single systemd-managed Python daemon with two parallel workers: (1) a `ThreatIntelSyncer` that fetches IOC feeds every 6 hours and bulk-inserts new malicious domains into Pi-hole's SQLite DB, and (2) a `DomainWatcher` that tails Pi-hole's FTL log in real-time, extracts domains never seen before, sends them to the local Ollama API for classification, and auto-blocks anything classified as malware/phishing/C2 with >80% confidence. Both workers share a lightweight SQLite state DB to avoid re-processing domains.
 
-**Tech Stack:** Python 3.11, sqlite3 (stdlib), requests, watchdog (log tailing), Ollama REST API (localhost:11434), Pi-hole SQLite DB (/etc/pihole/gravity.db), systemd, granite3.3:2b model.
+**Tech Stack:** Python 3.11, sqlite3 (stdlib), requests, watchdog (log tailing), Ollama REST API (localhost:11434), Pi-hole SQLite DB (/etc/pihole/gravity.db), systemd, granite4.1:3b model.
 
 **Deploy path:** Generic, configured at install time via setup wizard — all usernames, IPs, paths parameterized into `config_local.py`.
 
@@ -22,13 +22,13 @@
   (real-time tail)  │       │               │              │
                     │       ▼               ▼              │
                     │   StateDB        OllamaClassifier    │
-                    │   (seen?)     (granite3.3:2b)        │
+                    │   (seen?)     (granite4.1:3b)        │
                     │                    │                 │
                     │              confidence > 0.8?       │
                     │                    │                 │
   domain IOC feeds ─►  ThreatIntelSync   ▼                │
   URLhaus           │       │       PiholeBlocker          │
-  DigitalSide OSINT │       └────────────┘                │
+  OpenPhish         │       └────────────┘                │
   (every 6 hours)   │              │                       │
                     └──────────────┼───────────────────────┘
                                    ▼
@@ -119,8 +119,8 @@ INSTALL_DIR=${INSTALL_DIR:-$HOME/pihole-ai}
 read -p "Ollama API URL [http://localhost:11434]: " -r OLLAMA_URL
 OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}
 
-read -p "Ollama Model [granite3.3:2b]: " -r OLLAMA_MODEL
-OLLAMA_MODEL=${OLLAMA_MODEL:-granite3.3:2b}
+read -p "Ollama Model [granite4.1:3b]: " -r OLLAMA_MODEL
+OLLAMA_MODEL=${OLLAMA_MODEL:-granite4.1:3b}
 
 echo ""
 echo "Configuration Summary:"
@@ -232,7 +232,7 @@ import os
 
 # Ollama
 OLLAMA_BASE_URL = "http://localhost:11434"  # can override in config_local
-OLLAMA_MODEL = "granite3.3:2b"
+OLLAMA_MODEL = "granite4.1:3b"
 OLLAMA_TIMEOUT = 30
 OLLAMA_MAX_RETRIES = 2
 
@@ -254,12 +254,6 @@ THREAT_INTEL_FEEDS = [
     {
         "name": "URLhaus",
         "url": "https://urlhaus.abuse.ch/downloads/hostfile/",
-        "comment_prefix": "#",
-        "category": "MALWARE",
-    },
-    {
-        "name": "DigitalSide OSINT",
-        "url": "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt",
         "comment_prefix": "#",
         "category": "MALWARE",
     },

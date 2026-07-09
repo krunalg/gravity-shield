@@ -28,8 +28,8 @@ INSTALL_DIR=${INSTALL_DIR:-$HOME/pihole-ai}
 read -p "Ollama API URL [http://localhost:11434]: " -r OLLAMA_URL
 OLLAMA_URL=${OLLAMA_URL:-http://localhost:11434}
 
-read -p "Ollama Model [granite3.3:2b]: " -r OLLAMA_MODEL
-OLLAMA_MODEL=${OLLAMA_MODEL:-granite3.3:2b}
+read -p "Ollama Model [granite4.1:3b]: " -r OLLAMA_MODEL
+OLLAMA_MODEL=${OLLAMA_MODEL:-granite4.1:3b}
 
 PIHOLE_CMD=$(command -v pihole || true)
 PIHOLE_CMD=${PIHOLE_CMD:-/usr/local/bin/pihole}

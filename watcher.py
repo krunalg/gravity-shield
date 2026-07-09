@@ -11,6 +11,7 @@ import time
 
 from pihole_client import PiholeClient, extract_domains_from_lines
 from classifier import DomainClassifier
+from domain_policy import should_skip_classification
 from state_db import StateDB
 
 logger = logging.getLogger(__name__)
@@ -61,7 +62,7 @@ class DomainWatcher(threading.Thread):
         if not domains:
             return
 
-        domains = [d for d in domains if d not in SKIP_DOMAINS]
+        domains = [d for d in domains if not should_skip_classification(d)]
         new_domains = self._state_db.filter_unseen(domains)
 
         for domain in new_domains:

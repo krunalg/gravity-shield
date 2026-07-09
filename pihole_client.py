@@ -13,6 +13,8 @@ import time
 import logging
 from typing import Optional
 
+from domain_policy import is_never_block_domain
+
 logger = logging.getLogger(__name__)
 
 _QUERY_RE = re.compile(r"query\[(?:A|AAAA|MX|CNAME|TXT|HTTPS|SVCB)\]\s+(\S+)\s+from")
@@ -63,11 +65,15 @@ class PiholeClient:
         added = 0
         try:
             for domain in domains:
+                domain = domain.lower()
+                if is_never_block_domain(domain):
+                    logger.info(f"Skipped never-block domain: {domain}")
+                    continue
                 try:
                     conn.execute(
                         """INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment)
                            VALUES (?,1,1,?,?,?)""",
-                        (domain.lower(), now, now, comment)
+                        (domain, now, now, comment)
                     )
                     added += 1
                 except sqlite3.IntegrityError:
