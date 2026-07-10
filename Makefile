@@ -1,4 +1,4 @@
-.PHONY: help install test clean setup daemon daemon-start daemon-stop daemon-status logs fix-permissions
+.PHONY: help install test clean setup daemon-start daemon-stop daemon-restart daemon-status logs fix-permissions reset re-setup
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python3
@@ -16,6 +16,7 @@ help:
 	@echo "  Daemon Management:"
 	@echo "    make daemon-start    Start systemd daemon"
 	@echo "    make daemon-stop     Stop systemd daemon"
+	@echo "    make daemon-restart  Restart systemd daemon"
 	@echo "    make daemon-status   Check daemon status"
 	@echo "    make logs            Tail daemon logs"
 	@echo ""
@@ -58,6 +59,13 @@ daemon-stop:
 	fi
 	@SSH_USER=$$(python3 -c "from config_local import SSH_USER; print(SSH_USER)"); \
 	sudo systemctl stop pihole-ai-$$SSH_USER || echo "Daemon stop failed"
+
+daemon-restart:
+	@if [ -z "$$SUDO_USER" ]; then \
+		echo "ERROR: Must have sudo access"; exit 1; \
+	fi
+	@SSH_USER=$$(python3 -c "from config_local import SSH_USER; print(SSH_USER)"); \
+	sudo systemctl restart pihole-ai-$$SSH_USER && echo "✓ Daemon restarted" || echo "Daemon restart failed"
 
 daemon-status:
 	@if [ ! -f "config_local.py" ]; then \
