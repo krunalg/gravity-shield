@@ -11,6 +11,7 @@ import threading
 import time
 
 from brands import get_brand_map
+from rdap import get_domain_age_days
 from pihole_client import PiholeClient, extract_domains_from_lines
 from classifier import DomainClassifier
 from domain_policy import should_skip_classification
@@ -123,8 +124,19 @@ class ClassifierWorker(threading.Thread):
                 logger.error(f"Failed to log pre-filter classification for {domain}: {e}", exc_info=True)
             return
 
+        # RDAP age lookup only for domains that reach the LLM path — network
+        # call, so pre-filtered domains never trigger it. Fail-open: age=None.
+        age_days = None
+        if RDAP_ENABLED:
+            try:
+                age_days = get_domain_age_days(apex or domain, self._state_db)
+                if age_days is not None:
+                    logger.info(f"RDAP: {apex or domain} is {age_days} days old")
+            except Exception as e:
+                logger.warning(f"RDAP age lookup failed for {domain}: {e}")
+
         try:
-            result = self._classifier.classify(domain, brands=brands)
+            result = self._classifier.classify(domain, brands=brands, domain_age_days=age_days)
         except Exception as e:
             logger.error(f"Classifier failed for {domain}: {e}", exc_info=True)
             return

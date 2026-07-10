@@ -18,6 +18,7 @@ New DNS query
              unless known to a threat feed)
           -> features.extractor.extract() with runtime brand map
           -> rule pre-filter (skip LLM if rule_score < RULE_PREFILTER_THRESHOLD)
+          -> RDAP domain age lookup (cached in StateDB, fail-open)
           -> DomainClassifier / LLM via Ollama
           -> structured verdict
           -> PiholeClient
@@ -49,6 +50,7 @@ Threat-intel feed hit
 - `watcher.py` queue-based real-time query processing with subdomain apex deduplication, popularity allowlist, and rule pre-filter
 - `popularity.py` Tranco top-list fetcher (zip or plain CSV)
 - `brands.py` runtime brand map derived from the Tranco snapshot + `EXTRA_BRANDS` seed
+- `rdap.py` domain registration age via RDAP (IANA bootstrap), StateDB-cached
 - `daemon.py` thread supervisor — restarts watcher or worker if either dies
 
 ## Feature Extraction
@@ -87,6 +89,25 @@ No hardcoded brand list. `brands.get_brand_map(state_db)` builds
 - `features/brand.py` `detect(domain, brands=None)` skips the Levenshtein pass
   when the length gap alone makes the match threshold unreachable, keeping
   feed-scale verification cheap.
+
+## RDAP Domain Age Scoring
+
+`rdap.get_domain_age_days(apex, state_db)` runs only for domains that survive
+the rule pre-filter (post-prefilter, pre-LLM — low volume, so one network call
+per new suspicious domain is fine). Feeds are never RDAP-checked.
+
+- Server discovery: IANA bootstrap (`RDAP_BOOTSTRAP_URL`), TLD → base URL,
+  cached in memory for 7 days.
+- Registration date = RDAP `events[eventAction=registration].eventDate`.
+- Cache: StateDB `domain_registration` — successes cached forever (a
+  registration date never changes), failures negative-cached for
+  `RDAP_NEGATIVE_CACHE_DAYS` (7).
+- Scoring in `features/rules.py`: age ≤ `DOMAIN_AGE_NEW_DAYS` (30) →
+  +`DOMAIN_AGE_NEW_WEIGHT` (25); age ≤ `DOMAIN_AGE_RECENT_DAYS` (180) →
+  +`DOMAIN_AGE_RECENT_WEIGHT` (10). Unknown age = no signal (fail-open).
+- Evidence: `domain_age_days` included in the LLM evidence JSON with prompt
+  guidance; `null` means unknown and must be ignored.
+- `RDAP_ENABLED = False` disables lookups entirely.
 
 ## Popularity Allowlist
 
@@ -285,7 +306,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 100 tests.
+Current suite: 120 tests.
 
 Covered areas:
 
@@ -305,6 +326,7 @@ Covered areas:
 - brand map derivation (Tranco SLD tokens, min length, EXTRA_BRANDS override)
 - deterministic block gate (LLM risk_score cannot force or veto a block)
 - user allowlist file (exact/suffix entries, live reload)
+- RDAP bootstrap/date parsing, age caching (positive + negative), rule scoring, watcher fail-open wiring
 - state DB persistence/migration (TTL-aware seen-domain tracking, get_last_verdict, hours_since_last_sync)
 - Ollama HTTP wrapper
 
@@ -312,9 +334,12 @@ Covered areas:
 
 - TI block expiry: URLhaus entries churn within days — remove `TI:` blocks not
   re-seen in feeds for N days instead of accumulating forever
-- WHOIS age scoring
-- DNS/ASN reputation
-- TLS certificate analysis
+- DNS/ASN reputation (Spamhaus ASN-DROP feed + GeoLite2-ASN offline db;
+  resolve via upstream DNS directly, not through Pi-hole, to avoid loops)
+- TLS certificate analysis — feasible but opt-in only: grabbing certs means
+  connecting to suspected malicious hosts from the home IP. If added: python
+  `ssl` cert fetch, 3-5s timeout, LLM-path domains only, config flag default
+  off
 - dashboard for classification history
 - migration command for historical AI/TI blocks into `Adaptive Threat Blocklist`
 - configurable custom allowlist/blocklist import

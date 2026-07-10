@@ -31,6 +31,7 @@ Rules:
 - brand_match_type="embedded": brand name is a hyphen-separated part of the hostname (e.g. paypal-login) — strong impersonation signal
 - brand_match_type="contains": brand name is a substring of the registered domain — ambiguous: could be a brand-owned service domain or impersonation; this domain was NOT on the popularity allowlist, so weigh other signals (suspicious_tld, dga_score, entropy) before deciding
 - brand_match_type="fuzzy": hostname merely resembles the brand — impersonation signal when combined with suspicious_tld or high dga_score
+- domain_age_days: registration age via RDAP. Under 30 days = strong phishing/malware signal; under 180 = weak signal; null = unknown, ignore it
 - High DGA score + high entropy = likely C2/malware
 - Set recommended_action=BLOCK only for MALWARE, PHISHING, C2, RANSOMWARE
 
@@ -72,6 +73,7 @@ def _build_evidence(features: dict) -> dict:
         "brand_confidence": round(brand.get("confidence", 0), 2),
         "brand_match_type": brand.get("match_type"),
         "is_punycode": features.get("punycode", {}).get("is_punycode", False),
+        "domain_age_days": features.get("age", {}).get("age_days"),
         "threat_intel": {
             "urlhaus_hit": threat.get("urlhaus_hit", False),
             "feed_source": threat.get("feed_source"),
@@ -111,8 +113,10 @@ class DomainClassifier:
         self._client = ollama_client or OllamaClient()
 
     def classify(self, domain: str, threat_context: Optional[dict] = None,
-                 brands: Optional[dict] = None) -> ClassificationResult:
-        features = extract(domain, threat_context=threat_context, brands=brands)
+                 brands: Optional[dict] = None,
+                 domain_age_days: Optional[int] = None) -> ClassificationResult:
+        features = extract(domain, threat_context=threat_context, brands=brands,
+                           domain_age_days=domain_age_days)
         evidence = _build_evidence(features)
         rule_score = evidence["rule_score"]
         prompt = CLASSIFICATION_PROMPT.format(

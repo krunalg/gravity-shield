@@ -1,5 +1,5 @@
 import os, sys, queue
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 sys.path.insert(0, os.path.dirname(os.path.dirname(__file__)))
 
 from watcher import DomainWatcher, ClassifierWorker
@@ -95,9 +95,10 @@ def test_classifier_worker_classifies_and_blocks(tmp_path):
     q = queue.Queue()
     worker = ClassifierWorker(classify_queue=q, classifier=clf,
                               state_db=state, pihole_client=pihole)
-    worker._handle_domain(domain)
+    with patch("watcher.get_domain_age_days", return_value=None):
+        worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None)
     state.log_classification.assert_called_once()
     pihole.add_to_denylist.assert_called_once_with([domain], comment="AI:MALWARE:0.95")
 
@@ -172,7 +173,48 @@ def test_classifier_worker_ignores_popularity_for_threat_feed_domain():
     q = queue.Queue()
     worker = ClassifierWorker(classify_queue=q, classifier=clf,
                               state_db=state, pihole_client=pihole)
-    worker._handle_domain(domain)
+    with patch("watcher.get_domain_age_days", return_value=None):
+        worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None)
     pihole.add_to_denylist.assert_called_once()
+
+
+def test_classifier_worker_passes_rdap_age_to_classifier():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(
+        domain, "PHISHING", 0.95, "new domain", True
+    )
+    state = _make_worker_state()
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.get_domain_age_days", return_value=4) as age:
+        worker._handle_domain(domain)
+
+    age.assert_called_once_with("paypa1-secure.xyz", state)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=4)
+
+
+def test_classifier_worker_rdap_failure_is_fail_open():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(
+        domain, "SAFE", 0.9, "ok", False
+    )
+    state = _make_worker_state()
+    pihole = MagicMock()
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.get_domain_age_days", side_effect=RuntimeError("rdap down")):
+        worker._handle_domain(domain)
+
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None)

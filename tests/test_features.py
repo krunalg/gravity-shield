@@ -103,3 +103,27 @@ def test_brand_detect_defaults_to_extra_brands_seed():
     result = detect("hdfc-netbanking-login.xyz")
     assert result["matched_brand"] == "Hdfc"
     assert result["match_type"] == "embedded"
+
+
+def test_new_domain_age_adds_strong_rule_score():
+    features = extract("brand-new-shop.com", domain_age_days=5)
+    assert features["age"]["age_days"] == 5
+    assert features["rules"]["rule_score"] >= 25
+    assert any("Newly registered" in r for r in features["rules"]["rule_reasons"])
+
+
+def test_recent_domain_age_adds_weak_rule_score():
+    features = extract("recent-shop.com", domain_age_days=90)
+    assert features["rules"]["rule_score"] >= 10
+    assert any("Recently registered" in r for r in features["rules"]["rule_reasons"])
+
+
+def test_old_domain_age_adds_no_rule_score():
+    features = extract("old-shop.com", domain_age_days=3000)
+    assert not any("registered" in r for r in features["rules"]["rule_reasons"])
+
+
+def test_unknown_domain_age_adds_no_rule_score():
+    features = extract("nobody-knows.com")
+    assert features["age"]["age_days"] is None
+    assert not any("registered" in r for r in features["rules"]["rule_reasons"])

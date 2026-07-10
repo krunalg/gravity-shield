@@ -65,3 +65,22 @@ def test_batch_check_seen(db):
     db.mark_domain_seen("b.com")
     result = db.filter_unseen(["a.com", "b.com", "c.com"])
     assert result == ["c.com"]
+
+
+def test_domain_registration_cache_roundtrip(db):
+    assert db.get_domain_registration("evil.com") is None
+    db.cache_domain_registration("evil.com", "2020-01-15T09:30:00+00:00")
+    cached = db.get_domain_registration("evil.com")
+    assert cached["created_at"] == "2020-01-15T09:30:00+00:00"
+    assert cached["fetched_at"]
+
+def test_domain_registration_negative_cache_stores_null(db):
+    db.cache_domain_registration("unknown.tld", None)
+    cached = db.get_domain_registration("unknown.tld")
+    assert cached["created_at"] is None
+    assert cached["fetched_at"]
+
+def test_domain_registration_cache_upsert(db):
+    db.cache_domain_registration("evil.com", None)
+    db.cache_domain_registration("evil.com", "2024-01-01T00:00:00+00:00")
+    assert db.get_domain_registration("evil.com")["created_at"] == "2024-01-01T00:00:00+00:00"

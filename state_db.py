@@ -60,6 +60,11 @@ class StateDB:
                 domain TEXT PRIMARY KEY,
                 rank INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS domain_registration (
+                domain TEXT PRIMARY KEY,
+                created_at TEXT,
+                fetched_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sync_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 feed_name TEXT NOT NULL,
@@ -225,6 +230,29 @@ class StateDB:
             "SELECT domain, rank FROM popular_domains WHERE rank<=?", (max_rank,)
         )
         return {row["domain"]: row["rank"] for row in cur.fetchall()}
+
+    # ── domain registration (RDAP cache) ─────────────────────────────────────
+
+    def get_domain_registration(self, domain: str) -> dict | None:
+        cur = self._conn().execute(
+            "SELECT created_at, fetched_at FROM domain_registration WHERE domain=?",
+            (domain,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {"created_at": row["created_at"], "fetched_at": row["fetched_at"]}
+
+    def cache_domain_registration(self, domain: str, created_at: str | None):
+        conn = self._conn()
+        with conn:
+            conn.execute(
+                """INSERT INTO domain_registration (domain, created_at, fetched_at)
+                   VALUES (?,?,?)
+                   ON CONFLICT(domain) DO UPDATE SET
+                     created_at=excluded.created_at, fetched_at=excluded.fetched_at""",
+                (domain, created_at, _now())
+            )
 
     # ── sync log ──────────────────────────────────────────────────────────────
 

@@ -69,6 +69,18 @@ THREAT_INTEL_FEEDS = [
 
 THREAT_INTEL_INTERVAL_HOURS = 6
 
+# RDAP domain age scoring — registration date lookup for domains that reach
+# the LLM path (post pre-filter, low volume). Cached in StateDB; failures are
+# fail-open (no score). Feeds are never RDAP-checked (40k+ entries).
+RDAP_ENABLED = True
+RDAP_BOOTSTRAP_URL = "https://data.iana.org/rdap/dns.json"
+RDAP_TIMEOUT = 10
+RDAP_NEGATIVE_CACHE_DAYS = 7   # retry failed lookups after this many days
+DOMAIN_AGE_NEW_DAYS = 30       # domain younger than this: strong signal
+DOMAIN_AGE_NEW_WEIGHT = 25
+DOMAIN_AGE_RECENT_DAYS = 180   # domain younger than this: weak signal
+DOMAIN_AGE_RECENT_WEIGHT = 10
+
 # Popularity trust list (Tranco) — generic allowlist of established apex domains.
 # Domains ranked within POPULARITY_RANK_THRESHOLD skip LLM classification unless
 # they appear in a threat feed.

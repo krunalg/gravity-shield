@@ -124,3 +124,12 @@ def test_no_block_when_deterministic_rule_score_below_floor():
     # maybe-bad.com: deterministic rule_score 0 — below BLOCK_RULE_SCORE_FLOOR
     result = clf.classify("maybe-bad.com")
     assert result.should_block is False
+
+
+def test_classify_includes_domain_age_in_evidence_and_prompt():
+    client = _make_client('{"category": "SAFE", "confidence": 0.9, "reason": "ok"}')
+    clf = classifier.DomainClassifier(ollama_client=client)
+    clf.classify("fresh-site.xyz", domain_age_days=7)
+    prompt_sent = client.generate.call_args[0][0]
+    assert '"domain_age_days": 7' in prompt_sent
+    assert "domain_age_days" in classifier.CLASSIFICATION_PROMPT

@@ -37,6 +37,14 @@ def evaluate(features: dict) -> dict:
     if features["punycode"]["is_punycode"]:
         score += PUNYCODE_WEIGHT
         reasons.append("Punycode domain")
+    age_days = features.get("age", {}).get("age_days")
+    if age_days is not None:
+        if age_days <= DOMAIN_AGE_NEW_DAYS:
+            score += DOMAIN_AGE_NEW_WEIGHT
+            reasons.append(f"Newly registered domain ({age_days} days old)")
+        elif age_days <= DOMAIN_AGE_RECENT_DAYS:
+            score += DOMAIN_AGE_RECENT_WEIGHT
+            reasons.append(f"Recently registered domain ({age_days} days old)")
 
     if score >= 80:
         severity = "HIGH"
