@@ -122,7 +122,6 @@ if [[ -f "$INSTALL_DIR/pihole-ai.service.tpl" ]]; then
     # Fix permissions on Pi-hole directory and files
     echo "Fixing permissions on Pi-hole..."
     if command -v setfacl &> /dev/null; then
-        # Set ACLs on /etc/pihole directory and files
         [[ -d "/etc/pihole" ]] && sudo setfacl -m u:"$SSH_USER":rwx /etc/pihole/
         [[ -f "/etc/pihole/gravity.db" ]] && sudo setfacl -m u:"$SSH_USER":rw /etc/pihole/gravity.db
         [[ -f "/etc/pihole/versions" ]] && sudo setfacl -m u:"$SSH_USER":rw /etc/pihole/versions
@@ -130,7 +129,6 @@ if [[ -f "$INSTALL_DIR/pihole-ai.service.tpl" ]]; then
         [[ -f "/var/log/pihole/pihole.log" ]] && sudo setfacl -m u:"$SSH_USER":r /var/log/pihole/pihole.log
         echo "✓ ACL permissions set"
     else
-        # Fallback: use chmod
         [[ -d "/etc/pihole" ]] && sudo chmod o+rx /etc/pihole/
         [[ -f "/etc/pihole/gravity.db" ]] && sudo chmod o+rw /etc/pihole/gravity.db 2>/dev/null || true
         [[ -f "/etc/pihole/versions" ]] && sudo chmod o+rw /etc/pihole/versions 2>/dev/null || true
@@ -138,6 +136,33 @@ if [[ -f "$INSTALL_DIR/pihole-ai.service.tpl" ]]; then
         [[ -f "/var/log/pihole/pihole.log" ]] && sudo chmod o+r /var/log/pihole/pihole.log 2>/dev/null || true
         echo "✓ File permissions set"
     fi
+
+    # Install systemd path watcher to auto-restore ACLs when pihole -g recreates gravity.db
+    echo "Installing gravity.db permission watcher..."
+    sudo tee /etc/systemd/system/pihole-ai-fixperms.service > /dev/null << EOFSVC
+[Unit]
+Description=Restore Pi-hole gravity.db ACLs for pihole-ai
+
+[Service]
+Type=oneshot
+ExecStart=/bin/bash -c 'setfacl -m u:${SSH_USER}:rwx /etc/pihole/ && setfacl -m u:${SSH_USER}:rw /etc/pihole/gravity.db && setfacl -m u:${SSH_USER}:rw /etc/pihole/versions 2>/dev/null || true'
+EOFSVC
+
+    sudo tee /etc/systemd/system/pihole-ai-fixperms.path > /dev/null << EOFPATH
+[Unit]
+Description=Watch Pi-hole gravity.db for recreation by pihole -g
+
+[Path]
+PathChanged=/etc/pihole/gravity.db
+Unit=pihole-ai-fixperms.service
+
+[Install]
+WantedBy=multi-user.target
+EOFPATH
+
+    sudo systemctl daemon-reload
+    sudo systemctl enable --now pihole-ai-fixperms.path
+    echo "✓ Permission watcher installed (auto-restores ACLs after pihole -g)"
 
     echo "Starting daemon..."
     sudo systemctl start "pihole-ai-$SSH_USER"

@@ -1,4 +1,4 @@
-.PHONY: help install test clean setup daemon daemon-start daemon-stop daemon-status logs
+.PHONY: help install test clean setup daemon daemon-start daemon-stop daemon-status logs fix-permissions
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python3
@@ -22,6 +22,7 @@ help:
 	@echo "  Reset & Cleanup:"
 	@echo "    make reset           Stop daemon, clean config/state/logs"
 	@echo "    make re-setup        Reset and run setup wizard"
+	@echo "    make fix-permissions Re-apply Pi-hole file ACLs (run after pihole -g)"
 	@echo "    make clean           Remove venv and caches"
 	@echo ""
 
@@ -83,3 +84,18 @@ reset: daemon-stop
 re-setup: reset
 	@echo "Running setup wizard..."
 	make setup
+
+fix-permissions:
+	@if [ ! -f "config_local.py" ]; then \
+		echo "ERROR: config_local.py not found. Run 'make setup' first"; exit 1; \
+	fi
+	@SSH_USER=$$(python3 -c "from config_local import SSH_USER; print(SSH_USER)"); \
+	PIHOLE_DB=$$(python3 -c "from config_local import PIHOLE_DB_PATH; print(PIHOLE_DB_PATH)" 2>/dev/null || echo "/etc/pihole/gravity.db"); \
+	FTL_LOG=$$(python3 -c "from config_local import FTL_LOG_PATH; print(FTL_LOG_PATH)" 2>/dev/null || echo "/var/log/pihole/pihole.log"); \
+	echo "Re-applying ACLs for user $$SSH_USER..."; \
+	sudo setfacl -m u:$$SSH_USER:rwx /etc/pihole/ && echo "  ✓ /etc/pihole/"; \
+	sudo setfacl -m u:$$SSH_USER:rw $$PIHOLE_DB && echo "  ✓ $$PIHOLE_DB"; \
+	sudo setfacl -m u:$$SSH_USER:rw /etc/pihole/versions && echo "  ✓ /etc/pihole/versions"; \
+	sudo setfacl -m u:$$SSH_USER:rx /var/log/pihole/ && echo "  ✓ /var/log/pihole/"; \
+	sudo setfacl -m u:$$SSH_USER:r $$FTL_LOG && echo "  ✓ $$FTL_LOG"; \
+	echo "✓ Permissions restored"
