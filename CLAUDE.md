@@ -4,7 +4,9 @@
 
 Pi-hole AI Guardian: local DNS threat classification and threat-intel sync daemon for Raspberry Pi running Pi-hole and Ollama.
 
-**Tech Stack:** Python 3.11, sqlite3, requests, watchdog, Ollama (local LLM, default `granite4.1:3b`), systemd
+**Tech Stack:** Python 3.11, sqlite3, requests, watchdog, tldextract (offline PSL), Ollama (local LLM, default `granite4.1:3b`), systemd
+
+Dependencies are declared in `pyproject.toml` (`[project] dependencies`, dev tools in `[project.optional-dependencies]`). No requirements.txt.
 
 **Key Locations:**
 - Main code: `*.py` files in root
@@ -33,6 +35,7 @@ make clean
 **ClassifierWorker** (`watcher.py`)
 - Consumes domains from queue one at a time (never parallel Ollama calls).
 - Subdomain apex deduplication: if registered apex domain already blocked in StateDB, blocks subdomain directly without LLM call.
+- Popularity allowlist: if apex domain is in the Tranco top list (rank ≤ `POPULARITY_RANK_THRESHOLD`) and not known to any threat feed, allows without LLM call. Threat-feed hits always override popularity.
 - Rule pre-filter: skips LLM if `rule_score < RULE_PREFILTER_THRESHOLD` (default 15).
 - Calls `DomainClassifier` for domains that pass pre-filter.
 - Blocks only when classifier verdict, confidence, and rule score all pass configured thresholds.
@@ -48,8 +51,16 @@ make clean
 - Per-feed try/except: one bad feed does not crash the sync cycle.
 - Logs feed syncs and classification decisions.
 
+**Popularity Trust List** (`popularity.py`)
+- Fetches the Tranco top-1M list (zip or plain CSV), keeps domains ranked within `POPULARITY_RANK_THRESHOLD`.
+- Synced by `ThreatIntelSyncer` every `POPULARITY_SYNC_INTERVAL_HOURS` (weekly); stored in StateDB `popular_domains` table, atomically replaced per sync.
+- Empty/failed fetch never wipes the existing list.
+- Generic replacement for hardcoded legit-domain lists: established domains skip the LLM entirely.
+
 **Feature Extraction** (`features/`)
 - Deterministically extracts lexical, entropy, digit, hyphen, punycode, TLD, brand, DGA, and rule-score evidence.
+- Apex/hostname extraction uses the Public Suffix List via `tldextract` (offline bundled snapshot — `suffix_list_urls=()`), so multi-part TLDs like `.co.in`/`.co.uk` resolve correctly.
+- Brand detection returns `match_type`: `official` (registered domain is the brand's own domain per `KNOWN_BRANDS` values), `exact`, `contains`, `embedded` (hyphen-part), `leet` (character substitution), or `fuzzy`. Only non-`official` matches add rule score; the LLM prompt explains each type.
 - `features.extractor.extract(domain, threat_context=None)` is the only feature entry point used by `classifier.py`.
 - `_build_evidence()` in `classifier.py` distils the full feature dict into a concise flat JSON before sending to the LLM — removes noisy nested lexical fields, keeps key signals only.
 - The LLM receives structured evidence and should reason over it, not calculate features itself.
@@ -78,6 +89,9 @@ Important settings:
 - `RULE_PREFILTER_THRESHOLD` — skip LLM if rule_score below this (default 15)
 - `SEEN_DOMAIN_TTL_DAYS` — re-classify domains not seen in N days (default 7)
 - `FEED_STALENESS_WARN_HOURS` — warn if feed not synced in N hours (default 24)
+- `POPULARITY_FEED_URL` / `POPULARITY_FEED_NAME` — Tranco top-1M list
+- `POPULARITY_RANK_THRESHOLD` — apex domains ranked within this skip the LLM (default 100000)
+- `POPULARITY_SYNC_INTERVAL_HOURS` — popularity list refresh interval (default 168 = weekly)
 - `DGA_THRESHOLD`
 - `ENTROPY_THRESHOLD`
 - `BRAND_MATCH_THRESHOLD`
@@ -93,12 +107,13 @@ Important settings:
 
 All tests are mocked; no real Ollama, feed, or Pi-hole calls.
 
-- `test_features.py` — deterministic feature extraction
-- `test_classifier.py` — structured prompt and verdict parsing
+- `test_features.py` — deterministic feature extraction, PSL apex extraction, brand match_type provenance
+- `test_classifier.py` — structured prompt and verdict parsing, brand match_type guidance in prompt
 - `test_pihole_client.py` — gravity DB writes, never-block guard, group assignment, reload batching
-- `test_syncer.py` — threat-intel rule-based verification, feed freshness, feed error isolation
-- `test_watcher.py` — watcher skip policy, queue enqueue/drop, ClassifierWorker (prefilter, subdomain dedup, classify-and-block)
-- `test_state_db.py` — state schema/migration, TTL-aware seen-domain tracking, verdict lookup, sync hours
+- `test_syncer.py` — threat-intel rule-based verification, feed freshness, feed error isolation, popularity sync scheduling
+- `test_watcher.py` — watcher skip policy, queue enqueue/drop, ClassifierWorker (prefilter, popularity allowlist, subdomain dedup, classify-and-block)
+- `test_state_db.py` — state schema/migration, TTL-aware seen-domain tracking, verdict lookup, sync hours, popularity rank storage
+- `test_popularity.py` — Tranco list parsing (zip + plain CSV), rank threshold, fetch error handling
 - `test_ollama_client.py` — Ollama HTTP wrapper
 - `test_threat_intel.py` — feed parsing/fetch errors
 

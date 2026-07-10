@@ -120,6 +120,43 @@ def test_syncer_passes_threat_context_to_extractor():
     assert captured["evil.com"]["feed_source"] == "URLhaus"
 
 
+def test_syncer_syncs_popularity_list_when_never_synced():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    syncer = _make_syncer(state=state)
+
+    with patch("syncer.fetch_popularity_list", return_value={"google.com": 1}) as fetch:
+        syncer._sync_popularity()
+
+    fetch.assert_called_once()
+    state.replace_popular_domains.assert_called_once_with({"google.com": 1})
+    state.log_sync_run.assert_called_once()
+    assert state.log_sync_run.call_args.kwargs["feed_name"] == "Tranco"
+
+
+def test_syncer_skips_popularity_sync_when_fresh():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = 5.0
+    syncer = _make_syncer(state=state)
+
+    with patch("syncer.fetch_popularity_list") as fetch:
+        syncer._sync_popularity()
+
+    fetch.assert_not_called()
+    state.replace_popular_domains.assert_not_called()
+
+
+def test_syncer_empty_popularity_fetch_does_not_wipe_existing_list():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    syncer = _make_syncer(state=state)
+
+    with patch("syncer.fetch_popularity_list", return_value={}):
+        syncer._sync_popularity()
+
+    state.replace_popular_domains.assert_not_called()
+
+
 def test_syncer_feed_error_does_not_crash_sync_cycle():
     """One feed error is caught and logged; other feeds still run."""
     state = MagicMock()

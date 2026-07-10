@@ -17,7 +17,9 @@ def evaluate(features: dict) -> dict:
     if features["dga_score"] >= DGA_THRESHOLD:
         score += 30
         reasons.append("High DGA score")
-    if brand.get("matched_brand") and brand.get("confidence", 0.0) >= BRAND_MATCH_THRESHOLD:
+    if (brand.get("matched_brand")
+            and brand.get("match_type") != "official"
+            and brand.get("confidence", 0.0) >= BRAND_MATCH_THRESHOLD):
         score += 25
         reasons.append(f"Brand similarity to {brand['matched_brand']}")
     if features["entropy"]["shannon"] >= ENTROPY_THRESHOLD:

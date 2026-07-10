@@ -72,6 +72,16 @@ def test_recommended_allow_prevents_block_even_for_malware_category():
     assert result.category == "MALWARE"
     assert result.should_block is False
 
+def test_prompt_sends_brand_match_type_and_guidance():
+    client = _make_client('{"category": "SAFE", "confidence": 0.9, "reason": "ok"}')
+    clf = classifier.DomainClassifier(ollama_client=client)
+    clf.classify("g00gle.com")
+    prompt_sent = client.generate.call_args[0][0]
+    assert '"brand_match_type": "leet"' in prompt_sent
+    # Prompt must explain every match_type the evidence can contain
+    for mtype in ("official", "exact", "contains", "embedded", "leet", "fuzzy"):
+        assert f'brand_match_type="{mtype}"' in prompt_sent
+
 def test_prompt_contains_domain():
     client = _make_client('{"category": "SAFE", "confidence": 0.9, "reason": "ok"}')
     clf = classifier.DomainClassifier(ollama_client=client)

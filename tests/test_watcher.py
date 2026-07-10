@@ -65,6 +65,14 @@ def test_watcher_drops_domain_when_queue_full():
     assert q.qsize() == 1  # still just the blocker, evil.xyz was dropped
 
 
+def _make_worker_state():
+    state = MagicMock()
+    state.get_popularity_rank.return_value = None
+    state.is_threat_domain_known.return_value = False
+    state.get_last_verdict.return_value = None
+    return state
+
+
 def test_classifier_worker_classifies_and_blocks(tmp_path):
     from classifier import ClassificationResult
     clf = MagicMock()
@@ -73,7 +81,7 @@ def test_classifier_worker_classifies_and_blocks(tmp_path):
     clf.classify.return_value = ClassificationResult(
         domain, "MALWARE", 0.95, "known malware", True
     )
-    state = MagicMock()
+    state = _make_worker_state()
     pihole = MagicMock()
     pihole.add_to_denylist.return_value = 1
 
@@ -93,7 +101,7 @@ def test_classifier_worker_allows_safe_domain():
     clf.classify.return_value = ClassificationResult(
         "safe.com", "SAFE", 0.99, "legitimate", False
     )
-    state = MagicMock()
+    state = _make_worker_state()
     pihole = MagicMock()
 
     q = queue.Queue()
@@ -109,8 +117,7 @@ def test_classifier_worker_allows_safe_domain():
 
 def test_classifier_worker_prefilter_skips_ollama_for_low_score_domain():
     clf = MagicMock()
-    state = MagicMock()
-    state.get_last_verdict.return_value = None
+    state = _make_worker_state()
     pihole = MagicMock()
 
     q = queue.Queue()
@@ -122,3 +129,43 @@ def test_classifier_worker_prefilter_skips_ollama_for_low_score_domain():
     clf.classify.assert_not_called()
     pihole.add_to_denylist.assert_not_called()
     state.log_classification.assert_called_once()
+
+
+def test_classifier_worker_skips_ollama_for_popular_apex():
+    clf = MagicMock()
+    state = _make_worker_state()
+    state.get_popularity_rank.return_value = 42
+    pihole = MagicMock()
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    worker._handle_domain("oauth2.googleapis.com")
+
+    state.get_popularity_rank.assert_called_once_with("googleapis.com")
+    clf.classify.assert_not_called()
+    pihole.add_to_denylist.assert_not_called()
+    state.log_classification.assert_called_once()
+    assert state.log_classification.call_args.kwargs["category"] == "SAFE"
+
+
+def test_classifier_worker_ignores_popularity_for_threat_feed_domain():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(
+        domain, "PHISHING", 0.95, "feed-listed", True
+    )
+    state = _make_worker_state()
+    state.get_popularity_rank.return_value = 42       # popular apex...
+    state.is_threat_domain_known.return_value = True  # ...but threat feed knows it
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    worker._handle_domain(domain)
+
+    clf.classify.assert_called_once_with(domain)
+    pihole.add_to_denylist.assert_called_once()

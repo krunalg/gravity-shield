@@ -10,6 +10,7 @@ import time
 
 from classifier import DomainClassifier
 from features.extractor import extract
+from popularity import fetch_popularity_list
 from threat_intel import fetch_feed
 from pihole_client import PiholeClient
 from state_db import StateDB
@@ -48,6 +49,10 @@ class ThreatIntelSyncer(threading.Thread):
 
     def _sync_all_feeds(self):
         logger.info("Starting threat intel sync cycle")
+        try:
+            self._sync_popularity()
+        except Exception as e:
+            logger.error(f"Popularity list sync failed: {e}", exc_info=True)
         self._check_feed_freshness()
         total_added = 0
         for feed_cfg in self._feeds:
@@ -57,6 +62,24 @@ class ThreatIntelSyncer(threading.Thread):
             except Exception as e:
                 logger.error(f"Feed {feed_cfg.get('name', feed_cfg.get('url'))}: unhandled error during sync: {e}", exc_info=True)
         logger.info(f"Threat intel sync complete — {total_added} new domains added across all feeds")
+
+    def _sync_popularity(self):
+        """Refresh the Tranco popularity allowlist if it is due (weekly by default)."""
+        hours = self._state_db.hours_since_last_sync(POPULARITY_FEED_NAME)
+        if hours is not None and hours < POPULARITY_SYNC_INTERVAL_HOURS:
+            logger.debug(f"Popularity list fresh ({hours:.1f}h old), skipping sync")
+            return
+        ranks = fetch_popularity_list()
+        if not ranks:
+            logger.warning("Popularity list fetch returned no domains — keeping existing list")
+            return
+        self._state_db.replace_popular_domains(ranks)
+        self._state_db.log_sync_run(
+            feed_name=POPULARITY_FEED_NAME,
+            domains_added=len(ranks),
+            domains_skipped=0,
+        )
+        logger.info(f"Popularity list synced: {len(ranks)} domains (rank ≤ {POPULARITY_RANK_THRESHOLD})")
 
     def _check_feed_freshness(self):
         for feed_cfg in self._feeds:

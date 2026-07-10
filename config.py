@@ -78,6 +78,14 @@ THREAT_INTEL_FEEDS = [
 ]
 
 THREAT_INTEL_INTERVAL_HOURS = 6
+
+# Popularity trust list (Tranco) — generic allowlist of established apex domains.
+# Domains ranked within POPULARITY_RANK_THRESHOLD skip LLM classification unless
+# they appear in a threat feed.
+POPULARITY_FEED_NAME = "Tranco"
+POPULARITY_FEED_URL = "https://tranco-list.eu/top-1m.csv.zip"
+POPULARITY_RANK_THRESHOLD = 100_000
+POPULARITY_SYNC_INTERVAL_HOURS = 168  # weekly
 LOG_LEVEL = "INFO"
 
 # Paths — can be overridden by config_local.py

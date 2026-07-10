@@ -25,10 +25,12 @@ MALWARE | PHISHING | C2 | RANSOMWARE | AD | TRACKER | SAFE
 Rules:
 - risk_score must reflect the evidence: rule_score={rule_score}, adjust up/down based on your reasoning
 - If threat_intel shows a feed hit, trust it — score high
-- brand_match_type="contains": the REGISTERED DOMAIN contains the brand name as a substring (e.g. "googleapis" contains "google"). This is a legitimate official service domain — NOT impersonation. Do NOT classify as PHISHING.
-- brand_match_type="fuzzy": registered domain resembles but is NOT the brand name. Combine with suspicious_tld or other signals before flagging.
-- brand_match_type="exact": registered domain IS the brand name. Safe unless other signals present.
-- Brand impersonation = brand_match_type="fuzzy" AND (suspicious_tld=true OR high dga_score OR other red flags)
+- brand_match_type="official": registered domain IS the brand's official domain — SAFE, never impersonation
+- brand_match_type="exact": hostname equals the brand name but on a NON-official registered domain — suspicious, likely impersonation
+- brand_match_type="leet": brand name spelled with character substitutions (0→o, 1→l) — STRONG impersonation signal
+- brand_match_type="embedded": brand name is a hyphen-separated part of the hostname (e.g. paypal-login) — strong impersonation signal
+- brand_match_type="contains": brand name is a substring of the registered domain — ambiguous: could be a brand-owned service domain or impersonation; this domain was NOT on the popularity allowlist, so weigh other signals (suspicious_tld, dga_score, entropy) before deciding
+- brand_match_type="fuzzy": hostname merely resembles the brand — impersonation signal when combined with suspicious_tld or high dga_score
 - High DGA score + high entropy = likely C2/malware
 - Set recommended_action=BLOCK only for MALWARE, PHISHING, C2, RANSOMWARE
 

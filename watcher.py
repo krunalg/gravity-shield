@@ -70,6 +70,26 @@ class ClassifierWorker(threading.Thread):
                     logger.error(f"Failed to block subdomain {domain}: {e}", exc_info=True)
                 return
 
+        # Popularity allowlist: established apex domains (Tranco rank within
+        # threshold) skip LLM classification — unless a threat feed knows them.
+        try:
+            rank = self._state_db.get_popularity_rank(apex)
+            if rank is not None and not (
+                self._state_db.is_threat_domain_known(domain)
+                or self._state_db.is_threat_domain_known(apex)
+            ):
+                logger.debug(f"Popularity allow {domain} (apex {apex} rank={rank})")
+                self._state_db.log_classification(
+                    domain=domain,
+                    category="SAFE",
+                    confidence=1.0,
+                    reason=f"Popularity allowlist: apex {apex} rank={rank}",
+                    blocked=False,
+                )
+                return
+        except Exception as e:
+            logger.error(f"Popularity check failed for {domain}: {e}", exc_info=True)
+
         try:
             features = extract(domain)
         except Exception as e:

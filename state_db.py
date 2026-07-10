@@ -56,6 +56,10 @@ class StateDB:
                 feed_name TEXT NOT NULL,
                 added_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS popular_domains (
+                domain TEXT PRIMARY KEY,
+                rank INTEGER NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sync_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 feed_name TEXT NOT NULL,
@@ -196,6 +200,25 @@ class StateDB:
             [(d, feed, now) for d in domains]
         )
         self._conn().commit()
+
+    # ── popular domains ───────────────────────────────────────────────────────
+
+    def replace_popular_domains(self, ranks: dict[str, int]):
+        """Atomically replace the popularity allowlist with a fresh snapshot."""
+        conn = self._conn()
+        with conn:
+            conn.execute("DELETE FROM popular_domains")
+            conn.executemany(
+                "INSERT INTO popular_domains (domain, rank) VALUES (?,?)",
+                ranks.items()
+            )
+
+    def get_popularity_rank(self, domain: str) -> int | None:
+        cur = self._conn().execute(
+            "SELECT rank FROM popular_domains WHERE domain=?", (domain,)
+        )
+        row = cur.fetchone()
+        return row["rank"] if row else None
 
     # ── sync log ──────────────────────────────────────────────────────────────
 

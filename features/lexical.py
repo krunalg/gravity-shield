@@ -1,5 +1,11 @@
 import re
 
+import tldextract
+
+# suffix_list_urls=() disables runtime PSL fetching — uses the snapshot
+# bundled with the tldextract package, keeping the daemon fully offline.
+_tld_extract = tldextract.TLDExtract(suffix_list_urls=())
+
 _VOWELS = set("aeiou")
 _WORD_HINTS = {
     "login", "secure", "account", "bank", "pay", "cdn", "mail", "api",
@@ -8,13 +14,22 @@ _WORD_HINTS = {
 
 
 def registered_domain(domain: str) -> str:
-    labels = domain.rstrip(".").lower().split(".")
+    domain = domain.rstrip(".").lower()
+    ext = _tld_extract(domain)
+    if ext.domain and ext.suffix:
+        return f"{ext.domain}.{ext.suffix}"
+    # No recognized public suffix (e.g. single label, .local) — fall back
+    labels = domain.split(".")
     if len(labels) < 2:
-        return domain.lower()
+        return domain
     return ".".join(labels[-2:])
 
 
 def hostname(domain: str) -> str:
+    domain = domain.rstrip(".").lower()
+    ext = _tld_extract(domain)
+    if ext.domain:
+        return ext.domain
     return registered_domain(domain).split(".")[0]
 
 

@@ -1,0 +1,16 @@
+[project]
+name = "pihole-ai-guardian"
+version = "1.0.0"
+description = "Local DNS threat classification and threat-intel sync daemon for Pi-hole"
+requires-python = ">=3.11"
+dependencies = [
+    "requests==2.32.3",
+    "watchdog==4.0.1",
+    "tldextract==5.1.2",
+]
+
+[project.optional-dependencies]
+dev = ["pytest"]
+
+[tool.setuptools]
+py-modules = []

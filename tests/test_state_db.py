@@ -38,6 +38,20 @@ def test_log_sync_run(db):
     assert rows[0]["feed_name"] == "URLhaus"
     assert rows[0]["domains_added"] == 42
 
+def test_popularity_rank_unknown_initially(db):
+    assert db.get_popularity_rank("google.com") is None
+
+def test_replace_popular_domains_stores_ranks(db):
+    db.replace_popular_domains({"google.com": 1, "googleapis.com": 30})
+    assert db.get_popularity_rank("googleapis.com") == 30
+    assert db.get_popularity_rank("google.com") == 1
+
+def test_replace_popular_domains_clears_previous_list(db):
+    db.replace_popular_domains({"old.com": 5})
+    db.replace_popular_domains({"new.com": 7})
+    assert db.get_popularity_rank("old.com") is None
+    assert db.get_popularity_rank("new.com") == 7
+
 def test_batch_check_seen(db):
     db.mark_domain_seen("a.com")
     db.mark_domain_seen("b.com")
