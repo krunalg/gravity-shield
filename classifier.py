@@ -25,7 +25,10 @@ MALWARE | PHISHING | C2 | RANSOMWARE | AD | TRACKER | SAFE
 Rules:
 - risk_score must reflect the evidence: rule_score={rule_score}, adjust up/down based on your reasoning
 - If threat_intel shows a feed hit, trust it — score high
-- Brand impersonation + suspicious TLD = strong phishing signal
+- brand_match_type="contains": the REGISTERED DOMAIN contains the brand name as a substring (e.g. "googleapis" contains "google"). This is a legitimate official service domain — NOT impersonation. Do NOT classify as PHISHING.
+- brand_match_type="fuzzy": registered domain resembles but is NOT the brand name. Combine with suspicious_tld or other signals before flagging.
+- brand_match_type="exact": registered domain IS the brand name. Safe unless other signals present.
+- Brand impersonation = brand_match_type="fuzzy" AND (suspicious_tld=true OR high dga_score OR other red flags)
 - High DGA score + high entropy = likely C2/malware
 - Set recommended_action=BLOCK only for MALWARE, PHISHING, C2, RANSOMWARE
 
@@ -65,6 +68,7 @@ def _build_evidence(features: dict) -> dict:
         "digit_ratio": round(lexical.get("digit_ratio", 0), 2),
         "brand_match": brand.get("matched_brand"),
         "brand_confidence": round(brand.get("confidence", 0), 2),
+        "brand_match_type": brand.get("match_type"),
         "is_punycode": features.get("punycode", {}).get("is_punycode", False),
         "threat_intel": {
             "urlhaus_hit": threat.get("urlhaus_hit", False),

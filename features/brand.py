@@ -34,18 +34,26 @@ def detect(domain: str) -> dict:
     candidates = {raw_host.replace("-", ""), raw_host.translate(_LEET_TRANSLATION).replace("-", "")}
     candidates.update(part for part in raw_host.split("-") if part)
     candidates.update(part.translate(_LEET_TRANSLATION) for part in raw_host.split("-") if part)
-    best = {"matched_brand": None, "confidence": 0.0, "edit_distance": None}
+    best = {"matched_brand": None, "confidence": 0.0, "edit_distance": None, "match_type": None}
     for brand in KNOWN_BRANDS:
         for candidate in candidates:
             distance = _levenshtein(candidate, brand)
             confidence = 1.0 - (distance / max(len(candidate), len(brand), 1))
-            if brand in candidate and candidate != brand:
+            contains = brand in candidate and candidate != brand
+            if contains:
                 confidence = max(confidence, 0.85)
             if confidence > best["confidence"]:
+                if distance == 0:
+                    mtype = "exact"
+                elif contains:
+                    mtype = "contains"
+                else:
+                    mtype = "fuzzy"
                 best = {
                     "matched_brand": brand.title(),
                     "confidence": confidence,
                     "edit_distance": distance,
+                    "match_type": mtype,
                 }
     if best["confidence"] < BRAND_MATCH_THRESHOLD:
         best["matched_brand"] = None
