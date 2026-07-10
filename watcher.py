@@ -78,7 +78,7 @@ class ClassifierWorker(threading.Thread):
                 self._state_db.is_threat_domain_known(domain)
                 or self._state_db.is_threat_domain_known(apex)
             ):
-                logger.debug(f"Popularity allow {domain} (apex {apex} rank={rank})")
+                logger.info(f"Allowed {domain} via popularity allowlist (apex {apex} rank={rank}) — skipped LLM")
                 self._state_db.log_classification(
                     domain=domain,
                     category="SAFE",
@@ -99,7 +99,7 @@ class ClassifierWorker(threading.Thread):
         rule_score = features["rules"]["rule_score"]
 
         if rule_score < RULE_PREFILTER_THRESHOLD:
-            logger.debug(f"Pre-filter allow {domain} (rule_score={rule_score})")
+            logger.info(f"Allowed {domain} via rule pre-filter (rule_score={rule_score}<{RULE_PREFILTER_THRESHOLD}) — skipped LLM")
             try:
                 self._state_db.log_classification(
                     domain=domain,
