@@ -7,7 +7,11 @@ except ImportError:
 import sqlite3
 import threading
 from contextlib import suppress
-from datetime import datetime
+from datetime import datetime, timezone
+
+
+def _now() -> str:
+    return datetime.now(timezone.utc).isoformat()
 
 
 class StateDB:
@@ -27,7 +31,8 @@ class StateDB:
         conn.executescript("""
             CREATE TABLE IF NOT EXISTS seen_domains (
                 domain TEXT PRIMARY KEY,
-                first_seen TEXT NOT NULL
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS classifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -63,48 +68,77 @@ class StateDB:
         self._migrate_schema()
 
     def _migrate_schema(self):
-        columns = {
-            row["name"] for row in self._conn().execute("PRAGMA table_info(classifications)")
+        # classifications columns
+        cls_columns = {row["name"] for row in self._conn().execute("PRAGMA table_info(classifications)")}
+        cls_additions = {
+            "entropy": "REAL", "dga_score": "REAL", "rule_score": "INTEGER",
+            "brand": "TEXT", "brand_confidence": "REAL", "tld": "TEXT",
+            "tld_risk": "REAL", "is_punycode": "INTEGER",
         }
-        additions = {
-            "entropy": "REAL",
-            "dga_score": "REAL",
-            "rule_score": "INTEGER",
-            "brand": "TEXT",
-            "brand_confidence": "REAL",
-            "tld": "TEXT",
-            "tld_risk": "REAL",
-            "is_punycode": "INTEGER",
-        }
-        for name, column_type in additions.items():
-            if name not in columns:
+        for name, col_type in cls_additions.items():
+            if name not in cls_columns:
                 with suppress(sqlite3.OperationalError):
-                    self._conn().execute(f"ALTER TABLE classifications ADD COLUMN {name} {column_type}")
+                    self._conn().execute(f"ALTER TABLE classifications ADD COLUMN {name} {col_type}")
+
+        # seen_domains: add last_seen if missing
+        seen_columns = {row["name"] for row in self._conn().execute("PRAGMA table_info(seen_domains)")}
+        if "last_seen" not in seen_columns:
+            with suppress(sqlite3.OperationalError):
+                self._conn().execute("ALTER TABLE seen_domains ADD COLUMN last_seen TEXT")
+                # backfill last_seen = first_seen for existing rows
+                self._conn().execute("UPDATE seen_domains SET last_seen = first_seen WHERE last_seen IS NULL")
+
         self._conn().commit()
 
-    def is_domain_seen(self, domain: str) -> bool:
-        cur = self._conn().execute(
-            "SELECT 1 FROM seen_domains WHERE domain=?", (domain,)
-        )
-        return cur.fetchone() is not None
+    # ── seen domains ──────────────────────────────────────────────────────────
 
     def mark_domain_seen(self, domain: str):
+        now = _now()
         self._conn().execute(
-            "INSERT OR IGNORE INTO seen_domains (domain, first_seen) VALUES (?,?)",
-            (domain, datetime.utcnow().isoformat())
+            """INSERT INTO seen_domains (domain, first_seen, last_seen) VALUES (?,?,?)
+               ON CONFLICT(domain) DO UPDATE SET last_seen=excluded.last_seen""",
+            (domain, now, now)
         )
         self._conn().commit()
 
     def filter_unseen(self, domains: list[str]) -> list[str]:
+        """Return domains not seen within SEEN_DOMAIN_TTL_DAYS (or never seen)."""
         if not domains:
             return []
         placeholders = ",".join("?" * len(domains))
+        # Re-classify domains whose last_seen is older than TTL
+        cutoff = datetime.now(timezone.utc).replace(
+            hour=0, minute=0, second=0, microsecond=0
+        ).isoformat()
+        # Simple cutoff: domains seen more than TTL days ago are treated as unseen
         cur = self._conn().execute(
-            f"SELECT domain FROM seen_domains WHERE domain IN ({placeholders})",
+            f"""SELECT domain FROM seen_domains
+                WHERE domain IN ({placeholders})
+                AND last_seen >= datetime('now', '-{SEEN_DOMAIN_TTL_DAYS} days')""",
             domains
         )
-        seen = {row["domain"] for row in cur.fetchall()}
-        return [d for d in domains if d not in seen]
+        recently_seen = {row["domain"] for row in cur.fetchall()}
+        return [d for d in domains if d not in recently_seen]
+
+    def is_domain_seen(self, domain: str) -> bool:
+        """Check if domain was seen within TTL window."""
+        cur = self._conn().execute(
+            f"""SELECT 1 FROM seen_domains WHERE domain=?
+                AND last_seen >= datetime('now', '-{SEEN_DOMAIN_TTL_DAYS} days')""",
+            (domain,)
+        )
+        return cur.fetchone() is not None
+
+    def get_last_verdict(self, domain: str) -> dict | None:
+        """Return most recent classification verdict for a domain."""
+        cur = self._conn().execute(
+            "SELECT category, confidence, blocked FROM classifications WHERE domain=? ORDER BY classified_at DESC LIMIT 1",
+            (domain,)
+        )
+        row = cur.fetchone()
+        return dict(row) if row else None
+
+    # ── classifications ───────────────────────────────────────────────────────
 
     def log_classification(self, domain: str, category: str, confidence: float,
                            reason: str, blocked: bool, features: dict = None):
@@ -115,7 +149,7 @@ class StateDB:
                 entropy, dga_score, rule_score, brand, brand_confidence, tld, tld_risk, is_punycode)
                VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?)""",
             (domain, category, confidence, reason, int(blocked),
-             datetime.utcnow().isoformat(), *feature_values)
+             _now(), *feature_values)
         )
         self._conn().commit()
 
@@ -136,10 +170,11 @@ class StateDB:
 
     def get_recent_classifications(self, limit: int = 50) -> list[dict]:
         cur = self._conn().execute(
-            "SELECT * FROM classifications ORDER BY classified_at DESC LIMIT ?",
-            (limit,)
+            "SELECT * FROM classifications ORDER BY classified_at DESC LIMIT ?", (limit,)
         )
         return [dict(r) for r in cur.fetchall()]
+
+    # ── threat domains ────────────────────────────────────────────────────────
 
     def is_threat_domain_known(self, domain: str) -> bool:
         cur = self._conn().execute(
@@ -150,25 +185,41 @@ class StateDB:
     def mark_threat_domain_known(self, domain: str, feed: str):
         self._conn().execute(
             "INSERT OR IGNORE INTO threat_domains (domain, feed_name, added_at) VALUES (?,?,?)",
-            (domain, feed, datetime.utcnow().isoformat())
+            (domain, feed, _now())
         )
         self._conn().commit()
 
     def bulk_mark_threat_domains(self, domains: list[str], feed: str):
-        now = datetime.utcnow().isoformat()
+        now = _now()
         self._conn().executemany(
             "INSERT OR IGNORE INTO threat_domains (domain, feed_name, added_at) VALUES (?,?,?)",
             [(d, feed, now) for d in domains]
         )
         self._conn().commit()
 
+    # ── sync log ──────────────────────────────────────────────────────────────
+
     def log_sync_run(self, feed_name: str, domains_added: int, domains_skipped: int):
         self._conn().execute(
-            """INSERT INTO sync_log (feed_name, domains_added, domains_skipped, synced_at)
-               VALUES (?,?,?,?)""",
-            (feed_name, domains_added, domains_skipped, datetime.utcnow().isoformat())
+            "INSERT INTO sync_log (feed_name, domains_added, domains_skipped, synced_at) VALUES (?,?,?,?)",
+            (feed_name, domains_added, domains_skipped, _now())
         )
         self._conn().commit()
+
+    def hours_since_last_sync(self, feed_name: str) -> float | None:
+        """Return hours since last sync for a feed, or None if never synced."""
+        cur = self._conn().execute(
+            "SELECT synced_at FROM sync_log WHERE feed_name=? ORDER BY synced_at DESC LIMIT 1",
+            (feed_name,)
+        )
+        row = cur.fetchone()
+        if not row:
+            return None
+        last = datetime.fromisoformat(row["synced_at"])
+        if last.tzinfo is None:
+            last = last.replace(tzinfo=timezone.utc)
+        delta = datetime.now(timezone.utc) - last
+        return delta.total_seconds() / 3600
 
     def get_sync_history(self, limit: int = 20) -> list[dict]:
         cur = self._conn().execute(

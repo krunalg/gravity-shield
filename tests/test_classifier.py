@@ -78,5 +78,6 @@ def test_prompt_contains_domain():
     clf.classify("targetdomain.com")
     prompt_sent = client.generate.call_args[0][0]
     assert "targetdomain.com" in prompt_sent
-    assert '"entropy"' in prompt_sent
-    assert '"rules"' in prompt_sent
+    assert "entropy_shannon" in prompt_sent
+    assert "rule_score" in prompt_sent
+    assert "dga_score" in prompt_sent

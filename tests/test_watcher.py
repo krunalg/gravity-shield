@@ -110,6 +110,7 @@ def test_classifier_worker_allows_safe_domain():
 def test_classifier_worker_prefilter_skips_ollama_for_low_score_domain():
     clf = MagicMock()
     state = MagicMock()
+    state.get_last_verdict.return_value = None
     pihole = MagicMock()
 
     q = queue.Queue()

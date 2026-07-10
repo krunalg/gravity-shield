@@ -55,6 +55,21 @@ class ClassifierWorker(threading.Thread):
 
     def _handle_domain(self, domain: str):
         from features.extractor import extract
+        from features.lexical import registered_domain
+
+        # Subdomain deduplication: if the apex domain was already blocked,
+        # block this subdomain directly without an Ollama call.
+        apex = registered_domain(domain)
+        if apex and apex != domain:
+            apex_verdict = self._state_db.get_last_verdict(apex)
+            if apex_verdict and apex_verdict["blocked"]:
+                logger.info(f"Subdomain {domain} → apex {apex} already blocked, blocking directly")
+                try:
+                    self._pihole.add_to_denylist([domain], comment=f"AI:SUBDOMAIN:{apex}")
+                except Exception as e:
+                    logger.error(f"Failed to block subdomain {domain}: {e}", exc_info=True)
+                return
+
         try:
             features = extract(domain)
         except Exception as e:

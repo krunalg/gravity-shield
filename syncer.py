@@ -48,6 +48,7 @@ class ThreatIntelSyncer(threading.Thread):
 
     def _sync_all_feeds(self):
         logger.info("Starting threat intel sync cycle")
+        self._check_feed_freshness()
         total_added = 0
         for feed_cfg in self._feeds:
             try:
@@ -56,6 +57,18 @@ class ThreatIntelSyncer(threading.Thread):
             except Exception as e:
                 logger.error(f"Feed {feed_cfg.get('name', feed_cfg.get('url'))}: unhandled error during sync: {e}", exc_info=True)
         logger.info(f"Threat intel sync complete — {total_added} new domains added across all feeds")
+
+    def _check_feed_freshness(self):
+        for feed_cfg in self._feeds:
+            name = feed_cfg.get("name", feed_cfg["url"])
+            try:
+                hours = self._state_db.hours_since_last_sync(name)
+                if hours is None:
+                    logger.info(f"Feed {name}: never synced before")
+                elif isinstance(hours, (int, float)) and hours > FEED_STALENESS_WARN_HOURS:
+                    logger.warning(f"Feed {name}: last synced {hours:.1f}h ago (threshold: {FEED_STALENESS_WARN_HOURS}h) — possible network or config issue")
+            except Exception as e:
+                logger.error(f"Feed {name}: freshness check failed: {e}")
 
     def _sync_one_feed(self, feed_cfg: dict) -> int:
         name = feed_cfg.get("name", feed_cfg["url"])

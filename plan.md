@@ -8,22 +8,27 @@ Run a local Pi-hole protection daemon that combines deterministic domain feature
 
 ```text
 New DNS query
-  -> DomainWatcher
+  -> DomainWatcher (tails FTL log)
   -> never-block / skip policy
-  -> StateDB seen-domain check
-  -> features.extractor.extract()
-  -> DomainClassifier / Ollama / Granite
-  -> structured verdict
-  -> PiholeClient
-  -> gravity.db domainlist
-  -> Adaptive Threat Blocklist group
-  -> batched pihole reloadlists
+  -> StateDB TTL-aware seen-domain check
+  -> queue.Queue(maxsize=500)
+       -> ClassifierWorker (one domain at a time)
+          -> subdomain apex dedup (skip LLM if apex blocked)
+          -> features.extractor.extract()
+          -> rule pre-filter (skip LLM if rule_score < RULE_PREFILTER_THRESHOLD)
+          -> DomainClassifier / LLM via Ollama
+          -> structured verdict
+          -> PiholeClient
+          -> gravity.db domainlist
+          -> Adaptive Threat Blocklist group
+          -> batched pihole reloadlists
 
 Threat-intel feed hit
-  -> ThreatIntelSyncer
+  -> ThreatIntelSyncer (every 6h)
+  -> feed freshness alerting (warn if feed not synced in 24h)
   -> dedupe against StateDB
   -> features.extractor.extract(threat_context=...)
-  -> rule-based scoring only (no Ollama)
+  -> rule-based scoring only (no LLM)
   -> PiholeClient
   -> Adaptive Threat Blocklist group
 ```
@@ -31,12 +36,13 @@ Threat-intel feed hit
 ## Implemented Components
 
 - `features/` deterministic extraction package
-- `classifier.py` structured-evidence Granite prompt
-- `state_db.py` classification feature metadata columns and migration
+- `classifier.py` structured-evidence LLM prompt with `_build_evidence()` distillation
+- `state_db.py` classification feature metadata columns and migration, TTL-aware seen-domain tracking
 - `domain_policy.py` centralized never-block policy
 - `pihole_client.py` Pi-hole DB writer, never-block final guard, group assignment, reload batching
-- `syncer.py` threat-intel feed verification before blocking
-- `watcher.py` real-time query processing
+- `syncer.py` threat-intel feed verification before blocking, feed freshness alerting
+- `watcher.py` queue-based real-time query processing with subdomain apex deduplication and rule pre-filter
+- `daemon.py` thread supervisor — restarts watcher or worker if either dies
 
 ## Feature Extraction
 
@@ -53,11 +59,59 @@ Threat-intel feed hit
 - deterministic rule score, severity, and rule reasons
 - optional threat-intel context
 
-Granite must reason over this evidence. It must not calculate feature values itself.
+The LLM must reason over this evidence. It must not calculate feature values itself.
+
+`_build_evidence()` in `classifier.py` distils the full feature dict into a concise flat JSON (removes verbose nested lexical fields) before sending to the LLM.
+
+## Queue-Based Classification
+
+`DomainWatcher` and `ClassifierWorker` run as separate threads connected by a `queue.Queue(maxsize=500)`.
+
+- Watcher: enqueues new domains with `put_nowait()` — drops domain and logs warning if queue is full.
+- Worker: dequeues one domain at a time — never blocks, never calls Ollama in parallel.
+
+This decouples log reading from LLM latency. Bursts of DNS queries fill the queue without stalling log processing.
+
+## Subdomain Apex Deduplication
+
+In `ClassifierWorker._handle_domain()`:
+
+1. Extract the registered domain (apex) using `registered_domain(domain)`.
+2. Look up the last verdict for the apex via `StateDB.get_last_verdict(apex)`.
+3. If the apex is already blocked, block the subdomain directly (no LLM call). Comment: `AI:SUBDOMAIN:<apex>`.
+
+## Rule Pre-Filter
+
+Before calling the LLM:
+
+- Extract features and check `rule_score`.
+- If `rule_score < RULE_PREFILTER_THRESHOLD` (default 15), auto-allow without LLM call.
+- Log a `SAFE` classification with reason `Rule pre-filter: score=N`.
+
+This eliminates LLM calls for clearly benign DNS queries (most home traffic).
+
+## Classification TTL
+
+`StateDB.filter_unseen()` uses a TTL-aware query:
+
+```sql
+SELECT domain FROM seen_domains WHERE domain IN (...)
+  AND last_seen >= datetime('now', '-7 days')
+```
+
+Domains not seen in `SEEN_DOMAIN_TTL_DAYS` (default 7) are treated as unseen and re-classified. `mark_domain_seen()` updates `last_seen` on every hit (upsert).
+
+## Feed Freshness Alerting
+
+`ThreatIntelSyncer._check_feed_freshness()` runs at the start of each sync cycle:
+
+- Calls `StateDB.hours_since_last_sync(feed_name)` for each feed.
+- Logs `WARNING` if hours elapsed > `FEED_STALENESS_WARN_HOURS` (default 24).
+- Logs `INFO` if feed has never synced.
 
 ## Classifier Output Schema
 
-Granite should return JSON only:
+The LLM should return JSON only:
 
 ```json
 {
@@ -193,7 +247,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 50 tests.
+Current suite: 55 tests.
 
 Covered areas:
 
@@ -207,7 +261,9 @@ Covered areas:
 - threat-intel rule-based verification (URLhaus always passes, low-score domains skipped)
 - feed error isolation (one bad feed does not crash the sync cycle)
 - watcher skip policy
-- state DB persistence/migration
+- queue-based enqueue and drop-when-full behavior
+- rule pre-filter (low-score domains skip LLM)
+- state DB persistence/migration (TTL-aware seen-domain tracking, get_last_verdict, hours_since_last_sync)
 - Ollama HTTP wrapper
 
 ## Future Work
