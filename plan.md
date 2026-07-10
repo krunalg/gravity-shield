@@ -14,7 +14,9 @@ New DNS query
   -> queue.Queue(maxsize=500)
        -> ClassifierWorker (one domain at a time)
           -> subdomain apex dedup (skip LLM if apex blocked)
-          -> features.extractor.extract()
+          -> popularity allowlist (skip LLM if apex in Tranco top list,
+             unless known to a threat feed)
+          -> features.extractor.extract() with runtime brand map
           -> rule pre-filter (skip LLM if rule_score < RULE_PREFILTER_THRESHOLD)
           -> DomainClassifier / LLM via Ollama
           -> structured verdict
@@ -25,9 +27,12 @@ New DNS query
 
 Threat-intel feed hit
   -> ThreatIntelSyncer (every 6h)
+  -> popularity list sync (Tranco, weekly)
   -> feed freshness alerting (warn if feed not synced in 24h)
   -> dedupe against StateDB
-  -> features.extractor.extract(threat_context=...)
+  -> popular-apex guard (never auto-block a Tranco-ranked apex —
+     feeds list URLs on compromised legitimate sites)
+  -> features.extractor.extract(threat_context=...) with runtime brand map
   -> rule-based scoring only (no LLM)
   -> PiholeClient
   -> Adaptive Threat Blocklist group
@@ -41,7 +46,9 @@ Threat-intel feed hit
 - `domain_policy.py` centralized never-block policy
 - `pihole_client.py` Pi-hole DB writer, never-block final guard, group assignment, reload batching
 - `syncer.py` threat-intel feed verification before blocking, feed freshness alerting
-- `watcher.py` queue-based real-time query processing with subdomain apex deduplication and rule pre-filter
+- `watcher.py` queue-based real-time query processing with subdomain apex deduplication, popularity allowlist, and rule pre-filter
+- `popularity.py` Tranco top-list fetcher (zip or plain CSV)
+- `brands.py` runtime brand map derived from the Tranco snapshot + `EXTRA_BRANDS` seed
 - `daemon.py` thread supervisor — restarts watcher or worker if either dies
 
 ## Feature Extraction
@@ -54,7 +61,7 @@ Threat-intel feed hit
 - digit metrics
 - hyphen metrics
 - punycode/homograph signal
-- brand similarity
+- brand similarity (brand list derived at runtime — see Brand Detection)
 - DGA score
 - deterministic rule score, severity, and rule reasons
 - optional threat-intel context
@@ -62,6 +69,31 @@ Threat-intel feed hit
 The LLM must reason over this evidence. It must not calculate feature values itself.
 
 `_build_evidence()` in `classifier.py` distils the full feature dict into a concise flat JSON (removes verbose nested lexical fields) before sending to the LLM.
+
+## Brand Detection (data-driven)
+
+No hardcoded brand list. `brands.get_brand_map(state_db)` builds
+`{brand_token: official_apex}` at runtime:
+
+- Source: StateDB `popular_domains` (Tranco snapshot), apexes ranked within
+  `BRAND_SOURCE_RANK_THRESHOLD` (default 1000).
+- Token = SLD of the apex; tokens shorter than `BRAND_MIN_TOKEN_LENGTH`
+  (default 5) are dropped to avoid fuzzy false positives.
+- `EXTRA_BRANDS` config seed covers targets below the rank cutoff (regional
+  banks etc.) and overrides derived entries.
+- ClassifierWorker caches the map for `BRAND_MAP_REFRESH_SECONDS` (1h);
+  the syncer derives it once per sync cycle. On DB failure, detection falls
+  back to `EXTRA_BRANDS` alone.
+- `features/brand.py` `detect(domain, brands=None)` skips the Levenshtein pass
+  when the length gap alone makes the match threshold unreachable, keeping
+  feed-scale verification cheap.
+
+## Popularity Allowlist
+
+Tranco top list synced weekly into StateDB `popular_domains` (atomic replace;
+empty fetch never wipes the list). In the watcher, apexes ranked within
+`POPULARITY_RANK_THRESHOLD` skip the LLM unless a threat feed knows the
+domain. In the syncer, a Tranco-ranked apex is never auto-blocked from a feed.
 
 ## Queue-Based Classification
 
@@ -128,7 +160,8 @@ Blocking requires:
 
 - `recommended_action == "BLOCK"` or classification in `CATEGORIES_TO_BLOCK`
 - `confidence >= BLOCK_CONFIDENCE_THRESHOLD`
-- `risk_score >= RULE_SCORE_THRESHOLD`
+- deterministic `rule_score >= BLOCK_RULE_SCORE_FLOOR` — the LLM-returned
+  `risk_score` is advisory only; the model's arithmetic never gates a block
 - not covered by the never-block policy
 
 ## Pi-hole Group Requirement
@@ -188,8 +221,13 @@ Do not reintroduce feed URLs without verification and tests.
 
 Central policy:
 
-- `NEVER_BLOCK_DOMAINS`
-- `NEVER_BLOCK_SUFFIXES`
+- `NEVER_BLOCK_DOMAINS` / `NEVER_BLOCK_SUFFIXES` — infrastructure only
+  (`pi.hole`, `localhost`, `.local`, `.lan`, ...). Established public domains
+  are protected data-driven by the popularity allowlist and feed guard, not by
+  hardcoded lists.
+- `USER_ALLOWLIST_PATH` (default `~/pihole-ai/allowlist.txt`) — one entry per
+  line, `domain.com` exact or `.domain.com` suffix; mtime-cached, picked up
+  without restart. This is the false-positive recovery path.
 - `domain_policy.is_never_block_domain()`
 
 This is enforced by `PiholeClient` before DB insertion, not only by the watcher.
@@ -247,7 +285,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 55 tests.
+Current suite: 100 tests.
 
 Covered areas:
 
@@ -263,11 +301,17 @@ Covered areas:
 - watcher skip policy
 - queue-based enqueue and drop-when-full behavior
 - rule pre-filter (low-score domains skip LLM)
+- popularity allowlist (watcher) and popular-apex feed guard (syncer)
+- brand map derivation (Tranco SLD tokens, min length, EXTRA_BRANDS override)
+- deterministic block gate (LLM risk_score cannot force or veto a block)
+- user allowlist file (exact/suffix entries, live reload)
 - state DB persistence/migration (TTL-aware seen-domain tracking, get_last_verdict, hours_since_last_sync)
 - Ollama HTTP wrapper
 
 ## Future Work
 
+- TI block expiry: URLhaus entries churn within days — remove `TI:` blocks not
+  re-seen in feeds for N days instead of accumulating forever
 - WHOIS age scoring
 - DNS/ASN reputation
 - TLS certificate analysis

@@ -96,7 +96,7 @@ def test_add_to_denylist_skips_never_block_domains(tmp_path):
 
     client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
     added = client.add_to_denylist(
-        ["instagram.c10r.instagram.com", "graph.facebook.com", "evil.com"],
+        ["pi.hole", "router.lan", "evil.com"],
         comment="AI:MALWARE:0.99",
     )
 

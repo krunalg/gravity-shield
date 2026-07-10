@@ -52,6 +52,14 @@ def test_replace_popular_domains_clears_previous_list(db):
     assert db.get_popularity_rank("old.com") is None
     assert db.get_popularity_rank("new.com") == 7
 
+def test_get_top_domains_returns_ranked_subset(db):
+    db.replace_popular_domains({"google.com": 1, "paypal.com": 800, "deep.com": 50000})
+    top = db.get_top_domains(1000)
+    assert top == {"google.com": 1, "paypal.com": 800}
+
+def test_get_top_domains_empty_when_no_list(db):
+    assert db.get_top_domains(1000) == {}
+
 def test_batch_check_seen(db):
     db.mark_domain_seen("a.com")
     db.mark_domain_seen("b.com")

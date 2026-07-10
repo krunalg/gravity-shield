@@ -110,8 +110,9 @@ class DomainClassifier:
     def __init__(self, ollama_client: Optional[OllamaClient] = None):
         self._client = ollama_client or OllamaClient()
 
-    def classify(self, domain: str, threat_context: Optional[dict] = None) -> ClassificationResult:
-        features = extract(domain, threat_context=threat_context)
+    def classify(self, domain: str, threat_context: Optional[dict] = None,
+                 brands: Optional[dict] = None) -> ClassificationResult:
+        features = extract(domain, threat_context=threat_context, brands=brands)
         evidence = _build_evidence(features)
         rule_score = evidence["rule_score"]
         prompt = CLASSIFICATION_PROMPT.format(
@@ -149,11 +150,14 @@ class DomainClassifier:
         else:
             action_blocks = category in CATEGORIES_TO_BLOCK
 
+        # Gate on the deterministic rule score, not the LLM-returned risk_score:
+        # the model's arithmetic is advisory, the extractor's evidence is not.
+        det_rule_score = features["rules"]["rule_score"]
         should_block = (
             action_blocks
             and category in CATEGORIES_TO_BLOCK
             and confidence >= BLOCK_CONFIDENCE_THRESHOLD
-            and risk_score >= RULE_SCORE_THRESHOLD
+            and det_rule_score >= BLOCK_RULE_SCORE_FLOOR
         )
 
         if should_block:
@@ -165,8 +169,8 @@ class DomainClassifier:
                 gates.append(f"action={recommended_action or 'none'}")
             if confidence < BLOCK_CONFIDENCE_THRESHOLD:
                 gates.append(f"confidence={confidence:.0%}<{BLOCK_CONFIDENCE_THRESHOLD:.0%}")
-            if risk_score < RULE_SCORE_THRESHOLD:
-                gates.append(f"risk_score={risk_score}<{RULE_SCORE_THRESHOLD}")
+            if det_rule_score < BLOCK_RULE_SCORE_FLOOR:
+                gates.append(f"rule_score={det_rule_score}<{BLOCK_RULE_SCORE_FLOOR}")
             logger.info(f"Classified {domain}: {category} ({confidence:.0%}) risk={risk_score} → allow [{', '.join(gates)}] | {reason}")
         else:
             logger.info(f"Classified {domain}: {category} ({confidence:.0%}) → allow | {reason}")

@@ -13,28 +13,31 @@ def _make_watcher(state=None):
     return watcher, q, state
 
 
-def test_watcher_skips_known_legitimate_meta_hostname():
+def test_watcher_skips_infra_domains():
     watcher, q, state = _make_watcher()
 
     watcher._process_lines([
-        "Jul 09 22:01:00 dnsmasq[1]: query[A] instagram.c10r.instagram.com from 192.168.1.10\n"
+        "Jul 09 22:01:00 dnsmasq[1]: query[A] pi.hole from 192.168.1.10\n",
+        "Jul 09 22:01:01 dnsmasq[1]: query[A] router.lan from 192.168.1.10\n",
     ])
 
-    state.filter_unseen.assert_called_once_with([])
     state.mark_domain_seen.assert_not_called()
     assert q.empty()
 
 
-def test_watcher_skips_meta_owned_domain_suffixes():
-    watcher, q, state = _make_watcher()
+def test_watcher_no_longer_hardcodes_brand_domain_skips():
+    """Brand-owned domains are handled by the popularity allowlist at
+    classification time, not by a hardcoded skip list at intake."""
+    state = MagicMock()
+    state.filter_unseen.return_value = ["graph.facebook.com"]
+    q = queue.Queue()
+    watcher = DomainWatcher(state_db=state, classify_queue=q)
 
     watcher._process_lines([
         "Jul 09 22:01:00 dnsmasq[1]: query[A] graph.facebook.com from 192.168.1.10\n",
-        "Jul 09 22:01:01 dnsmasq[1]: query[A] edge-mqtt.facebook.com from 192.168.1.10\n",
     ])
 
-    state.filter_unseen.assert_called_once_with([])
-    assert q.empty()
+    assert q.get_nowait() == "graph.facebook.com"
 
 
 def test_watcher_enqueues_new_unseen_domain():
@@ -70,7 +73,11 @@ def _make_worker_state():
     state.get_popularity_rank.return_value = None
     state.is_threat_domain_known.return_value = False
     state.get_last_verdict.return_value = None
+    # Tranco snapshot the worker derives its brand map from
+    state.get_top_domains.return_value = {"paypal.com": 30}
     return state
+
+_WORKER_BRANDS = {"paypal": "paypal.com", **__import__("config").EXTRA_BRANDS}
 
 
 def test_classifier_worker_classifies_and_blocks(tmp_path):
@@ -90,7 +97,7 @@ def test_classifier_worker_classifies_and_blocks(tmp_path):
                               state_db=state, pihole_client=pihole)
     worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS)
     state.log_classification.assert_called_once()
     pihole.add_to_denylist.assert_called_once_with([domain], comment="AI:MALWARE:0.95")
 
@@ -167,5 +174,5 @@ def test_classifier_worker_ignores_popularity_for_threat_feed_domain():
                               state_db=state, pihole_client=pihole)
     worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS)
     pihole.add_to_denylist.assert_called_once()

@@ -50,9 +50,14 @@ def _candidates(raw_host: str) -> list[tuple[str, bool, bool]]:
     return out
 
 
-def detect(domain: str) -> dict:
+def detect(domain: str, brands: dict[str, str] | None = None) -> dict:
+    """Detect brand impersonation. `brands` maps brand token -> official apex
+    (derived from the Tranco list via brands.get_brand_map); falls back to the
+    EXTRA_BRANDS config seed when not supplied."""
+    if brands is None:
+        brands = EXTRA_BRANDS
     apex = registered_domain(domain)
-    for brand, official_domain in KNOWN_BRANDS.items():
+    for brand, official_domain in brands.items():
         if apex == official_domain:
             return {
                 "matched_brand": brand.title(),
@@ -63,11 +68,16 @@ def detect(domain: str) -> dict:
 
     raw_host = hostname(domain)
     best = dict(_NO_MATCH)
-    for brand in KNOWN_BRANDS:
+    for brand in brands:
         for candidate, via_leet, via_part in _candidates(raw_host):
-            distance = _levenshtein(candidate, brand)
-            confidence = 1.0 - (distance / max(len(candidate), len(brand), 1))
+            max_len = max(len(candidate), len(brand), 1)
             contains = brand in candidate and candidate != brand
+            # Length gap bounds Levenshtein distance from below, so a big gap
+            # can never reach the match threshold — skip the O(n*m) pass.
+            if not contains and (1 - abs(len(candidate) - len(brand)) / max_len) < BRAND_MATCH_THRESHOLD:
+                continue
+            distance = _levenshtein(candidate, brand)
+            confidence = 1.0 - (distance / max_len)
             if contains:
                 confidence = max(confidence, 0.85)
             if confidence > best["confidence"]:

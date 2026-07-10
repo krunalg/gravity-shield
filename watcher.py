@@ -10,6 +10,7 @@ import queue
 import threading
 import time
 
+from brands import get_brand_map
 from pihole_client import PiholeClient, extract_domains_from_lines
 from classifier import DomainClassifier
 from domain_policy import should_skip_classification
@@ -34,9 +35,17 @@ class ClassifierWorker(threading.Thread):
         self._state_db = state_db
         self._pihole = pihole_client
         self._stop_event = threading.Event()
+        self._brands: dict[str, str] | None = None
+        self._brands_loaded_at = 0.0
 
     def stop(self):
         self._stop_event.set()
+
+    def _get_brands(self) -> dict[str, str]:
+        if self._brands is None or time.time() - self._brands_loaded_at > BRAND_MAP_REFRESH_SECONDS:
+            self._brands = get_brand_map(self._state_db)
+            self._brands_loaded_at = time.time()
+        return self._brands
 
     def run(self):
         logger.info("ClassifierWorker started")
@@ -90,8 +99,9 @@ class ClassifierWorker(threading.Thread):
         except Exception as e:
             logger.error(f"Popularity check failed for {domain}: {e}", exc_info=True)
 
+        brands = self._get_brands()
         try:
-            features = extract(domain)
+            features = extract(domain, brands=brands)
         except Exception as e:
             logger.error(f"Feature extraction failed for {domain}: {e}", exc_info=True)
             return
@@ -114,7 +124,7 @@ class ClassifierWorker(threading.Thread):
             return
 
         try:
-            result = self._classifier.classify(domain)
+            result = self._classifier.classify(domain, brands=brands)
         except Exception as e:
             logger.error(f"Classifier failed for {domain}: {e}", exc_info=True)
             return

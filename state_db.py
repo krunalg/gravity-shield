@@ -220,6 +220,12 @@ class StateDB:
         row = cur.fetchone()
         return row["rank"] if row else None
 
+    def get_top_domains(self, max_rank: int) -> dict[str, int]:
+        cur = self._conn().execute(
+            "SELECT domain, rank FROM popular_domains WHERE rank<=?", (max_rank,)
+        )
+        return {row["domain"]: row["rank"] for row in cur.fetchall()}
+
     # ── sync log ──────────────────────────────────────────────────────────────
 
     def log_sync_run(self, feed_name: str, domains_added: int, domains_skipped: int):

@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 
+from brands import get_brand_map
 from classifier import DomainClassifier
 from features.extractor import extract
 from popularity import fetch_popularity_list
@@ -141,10 +142,29 @@ class ThreatIntelSyncer(threading.Thread):
             "ioc_category": category,
             "urlhaus_hit": is_urlhaus,
         }
+        from features.lexical import registered_domain
+
+        brands = get_brand_map(self._state_db)
         verified = []
         skipped_count = 0
+        popular_skipped = 0
         for domain in domains:
-            features = extract(domain, threat_context=threat_context)
+            # Feeds list URLs, often hosted on compromised legitimate sites.
+            # Never auto-block an apex established enough to hold a Tranco rank.
+            apex = registered_domain(domain)
+            rank = self._state_db.get_popularity_rank(apex)
+            if rank is not None:
+                popular_skipped += 1
+                logger.info(f"Feed {source}: not blocking {domain} — apex {apex} is popular (rank={rank})")
+                self._state_db.log_classification(
+                    domain=domain,
+                    category=category,
+                    confidence=0.0,
+                    reason=f"Feed {source} hit, but apex {apex} popular (rank={rank}) — not blocked",
+                    blocked=False,
+                )
+                continue
+            features = extract(domain, threat_context=threat_context, brands=brands)
             rule_score = features["rules"]["rule_score"]
             # URLhaus hit alone scores 100 — always passes.
             # Other feeds: require RULE_SCORE_THRESHOLD.
@@ -164,6 +184,7 @@ class ThreatIntelSyncer(threading.Thread):
                 logger.debug(f"Feed {source}: rule-skipped {domain} (score={rule_score})")
         logger.info(
             f"Feed {source}: rule-verified {len(verified)} domains, "
-            f"rule-skipped {skipped_count} (score<{RULE_SCORE_THRESHOLD})"
+            f"rule-skipped {skipped_count} (score<{RULE_SCORE_THRESHOLD}), "
+            f"popularity-skipped {popular_skipped}"
         )
         return verified
