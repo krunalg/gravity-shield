@@ -43,6 +43,8 @@ KNOWN_BRANDS = {
     "chase": "chase.com",
     "wellsfargo": "wellsfargo.com",
     "bankofamerica": "bankofamerica.com",
+    "youtube": "youtube.com",
+    "claude": "claude.ai"
 }
 
 # Domains to never classify or block
