@@ -133,3 +133,12 @@ def test_classify_includes_domain_age_in_evidence_and_prompt():
     prompt_sent = client.generate.call_args[0][0]
     assert '"domain_age_days": 7' in prompt_sent
     assert "domain_age_days" in classifier.CLASSIFICATION_PROMPT
+
+def test_classify_includes_shared_hosting_in_evidence_and_prompt():
+    client = _make_client('{"classification": "PHISHING", "confidence": 0.9, "recommended_action": "BLOCK"}')
+    clf = classifier.DomainClassifier(ollama_client=client)
+    clf.classify("paypal-login.github.io", brands={"paypal": "paypal.com"},
+                 shared_hosting_provider="github.io")
+    prompt = client.generate.call_args.args[0]
+    assert '"shared_hosting_provider": "github.io"' in prompt
+    assert "shared_hosting_provider" in classifier.CLASSIFICATION_PROMPT

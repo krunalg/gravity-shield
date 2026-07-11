@@ -32,6 +32,7 @@ Rules:
 - brand_match_type="contains": brand name is a substring of the registered domain — ambiguous: could be a brand-owned service domain or impersonation; this domain was NOT on the popularity allowlist, so weigh other signals (suspicious_tld, dga_score, entropy) before deciding
 - brand_match_type="fuzzy": hostname merely resembles the brand — impersonation signal when combined with suspicious_tld or high dga_score
 - domain_age_days: registration age via RDAP. Under 30 days = strong phishing/malware signal; under 180 = weak signal; null = unknown, ignore it
+- shared_hosting_provider: hostname is user content on this platform (github.io, pages.dev, ...) — the subdomain owner is untrusted and the provider's reputation does NOT vouch for it; judge the subdomain label itself
 - High DGA score + high entropy = likely C2/malware
 - Set recommended_action=BLOCK only for MALWARE, PHISHING, C2, RANSOMWARE
 
@@ -74,6 +75,7 @@ def _build_evidence(features: dict) -> dict:
         "brand_match_type": brand.get("match_type"),
         "is_punycode": features.get("punycode", {}).get("is_punycode", False),
         "domain_age_days": features.get("age", {}).get("age_days"),
+        "shared_hosting_provider": features.get("shared_hosting", {}).get("provider"),
         "threat_intel": {
             "urlhaus_hit": threat.get("urlhaus_hit", False),
             "feed_source": threat.get("feed_source"),
@@ -114,9 +116,11 @@ class DomainClassifier:
 
     def classify(self, domain: str, threat_context: Optional[dict] = None,
                  brands: Optional[dict] = None,
-                 domain_age_days: Optional[int] = None) -> ClassificationResult:
+                 domain_age_days: Optional[int] = None,
+                 shared_hosting_provider: Optional[str] = None) -> ClassificationResult:
         features = extract(domain, threat_context=threat_context, brands=brands,
-                           domain_age_days=domain_age_days)
+                           domain_age_days=domain_age_days,
+                           shared_hosting_provider=shared_hosting_provider)
         evidence = _build_evidence(features)
         rule_score = evidence["rule_score"]
         prompt = CLASSIFICATION_PROMPT.format(

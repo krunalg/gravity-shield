@@ -37,6 +37,10 @@ def evaluate(features: dict) -> dict:
     if features["punycode"]["is_punycode"]:
         score += PUNYCODE_WEIGHT
         reasons.append("Punycode domain")
+    provider = features.get("shared_hosting", {}).get("provider")
+    if provider:
+        score += SHARED_HOSTING_WEIGHT
+        reasons.append(f"User content on shared-hosting provider {provider}")
     age_days = features.get("age", {}).get("age_days")
     if age_days is not None:
         if age_days <= DOMAIN_AGE_NEW_DAYS:

@@ -23,6 +23,31 @@ BLOCK_RULE_SCORE_FLOOR = 15    # watcher: deterministic rule_score floor for LLM
 SEEN_DOMAIN_TTL_DAYS = 7       # re-classify domains not seen in this many days
 FEED_STALENESS_WARN_HOURS = 24 # warn if a feed hasn't synced in this many hours
 TI_BLOCK_EXPIRY_DAYS = 30      # unblock TI: feed domains not re-seen in this many days (0 = never expire)
+
+# ── Shared hosting / user-content platforms ──────────────────────────────────
+# Primary source is the PSL private-domains section (synced weekly into StateDB,
+# offline fallback = tldextract bundled snapshot). A feed hostname under one of
+# these suffixes is attacker-controlled user content: block the FULL hostname
+# and ignore the provider's popularity.
+PSL_FEED_URL = "https://publicsuffix.org/list/public_suffix_list.dat"
+PSL_FEED_NAME = "psl-private-domains"
+PSL_SYNC_INTERVAL_HOURS = 168        # weekly, like the Tranco list
+SHARED_HOSTING_REFRESH_SECONDS = 3600  # in-memory suffix cache TTL
+SHARED_HOSTING_WEIGHT = 10           # rule weight: hostname is user content on a shared host
+# User seed for providers the PSL private section does not (yet) list.
+# Same pattern as EXTRA_BRANDS: data-driven primary source + small local seed.
+EXTRA_SHARED_HOSTING_SUFFIXES = {
+    "weebly.com",
+    "weeblysite.com",
+    "webflow.io",
+    "godaddysites.com",
+    "replit.app",
+    "gitbook.io",
+    "zapier.app",
+    "edgeone.app",
+    "myclickfunnels.com",
+    "eu.cc",
+}
 BRAND_MATCH_THRESHOLD = 0.80
 PUNYCODE_WEIGHT = 35
 HIGH_RISK_TLDS = {".ru", ".xyz", ".tk", ".pw", ".cc", ".top", ".click", ".info"}

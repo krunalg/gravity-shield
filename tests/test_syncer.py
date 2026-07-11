@@ -281,3 +281,107 @@ def test_syncer_cycle_runs_expiry():
         syncer._sync_all_feeds()
 
     state.get_expired_threat_domains.assert_called_once()
+
+
+def test_syncer_blocks_full_hostname_on_shared_hosting_despite_popular_apex():
+    """evil.github.io: github.io is Tranco-popular, but the subdomain is
+    attacker-controlled user content — block the FULL hostname."""
+    state = MagicMock()
+    state.is_threat_domain_known.return_value = False
+    state.get_popularity_rank.side_effect = lambda apex: 90 if apex == "github.io" else None
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+    syncer = ThreatIntelSyncer(
+        state_db=state,
+        pihole_client=pihole,
+        feeds=[{"name": "OpenPhish", "url": "http://feed", "category": "PHISHING"}],
+    )
+
+    with patch("syncer.fetch_feed", return_value=["evil.github.io"]), \
+         patch("syncer.get_shared_hosting_suffixes", return_value={"github.io"}):
+        added = syncer._sync_one_feed(syncer._feeds[0])
+
+    assert added == 1
+    pihole.add_to_denylist.assert_called_once_with(
+        ["evil.github.io"], comment="TI:PHISHING:OpenPhish"
+    )
+
+
+def test_syncer_shared_hosting_bypasses_rule_score_threshold():
+    """Low-lexical-score subdomain on shared hosting still blocked — the feed
+    listing plus attacker-controlled subdomain is the evidence."""
+    state = MagicMock()
+    state.is_threat_domain_known.return_value = False
+    state.get_popularity_rank.return_value = None
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+    syncer = ThreatIntelSyncer(
+        state_db=state,
+        pihole_client=pihole,
+        feeds=[{"name": "OpenPhish", "url": "http://feed", "category": "PHISHING"}],
+    )
+
+    # "blog.pages.dev" scores near zero lexically — would fail RULE_SCORE_THRESHOLD
+    with patch("syncer.fetch_feed", return_value=["blog.pages.dev"]), \
+         patch("syncer.get_shared_hosting_suffixes", return_value={"pages.dev"}):
+        added = syncer._sync_one_feed(syncer._feeds[0])
+
+    assert added == 1
+    pihole.add_to_denylist.assert_called_once_with(
+        ["blog.pages.dev"], comment="TI:PHISHING:OpenPhish"
+    )
+
+
+def test_syncer_never_blocks_shared_hosting_provider_apex_itself():
+    """Feed listing the provider apex (github.io) must never block the provider."""
+    state = MagicMock()
+    state.is_threat_domain_known.return_value = False
+    state.get_popularity_rank.return_value = None
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_feed", return_value=["github.io"]), \
+         patch("syncer.get_shared_hosting_suffixes", return_value={"github.io"}):
+        added = syncer._sync_one_feed(syncer._feeds[0])
+
+    assert added == 0
+    pihole.add_to_denylist.assert_not_called()
+    logged = {c.kwargs["domain"]: c.kwargs["blocked"] for c in state.log_classification.call_args_list}
+    assert logged["github.io"] is False
+
+
+def test_syncer_syncs_psl_private_suffixes_when_due():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None  # never synced
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_psl_private_suffixes", return_value={"github.io", "pages.dev"}) as fetch:
+        syncer._sync_shared_hosting()
+
+    fetch.assert_called_once()
+    state.replace_shared_hosting_suffixes.assert_called_once_with({"github.io", "pages.dev"})
+
+
+def test_syncer_skips_psl_sync_when_fresh():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = 1.0
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_psl_private_suffixes") as fetch:
+        syncer._sync_shared_hosting()
+
+    fetch.assert_not_called()
+
+
+def test_syncer_empty_psl_fetch_keeps_existing_suffixes():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_psl_private_suffixes", return_value=set()):
+        syncer._sync_shared_hosting()
+
+    state.replace_shared_hosting_suffixes.assert_not_called()

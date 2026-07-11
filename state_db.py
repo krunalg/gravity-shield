@@ -61,6 +61,9 @@ class StateDB:
                 domain TEXT PRIMARY KEY,
                 rank INTEGER NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS shared_hosting_suffixes (
+                suffix TEXT PRIMARY KEY
+            );
             CREATE TABLE IF NOT EXISTS domain_registration (
                 domain TEXT PRIMARY KEY,
                 created_at TEXT,
@@ -271,6 +274,22 @@ class StateDB:
             "SELECT domain, rank FROM popular_domains WHERE rank<=?", (max_rank,)
         )
         return {row["domain"]: row["rank"] for row in cur.fetchall()}
+
+    # ── shared hosting suffixes (PSL private section) ────────────────────────
+
+    def replace_shared_hosting_suffixes(self, suffixes: set[str]):
+        """Atomically replace the shared-hosting suffix snapshot."""
+        conn = self._conn()
+        with conn:
+            conn.execute("DELETE FROM shared_hosting_suffixes")
+            conn.executemany(
+                "INSERT INTO shared_hosting_suffixes (suffix) VALUES (?)",
+                [(s,) for s in suffixes]
+            )
+
+    def get_shared_hosting_suffixes(self) -> set[str]:
+        cur = self._conn().execute("SELECT suffix FROM shared_hosting_suffixes")
+        return {row["suffix"] for row in cur.fetchall()}
 
     # ── domain registration (RDAP cache) ─────────────────────────────────────
 

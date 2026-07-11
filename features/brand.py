@@ -4,7 +4,7 @@ try:
 except ImportError:
     pass
 
-from .lexical import hostname, registered_domain
+from .lexical import hostname, icann_hostname, registered_domain
 
 _LEET_TRANSLATION = str.maketrans({"0": "o", "1": "l", "3": "e", "4": "a", "5": "s", "7": "t"})
 
@@ -66,10 +66,14 @@ def detect(domain: str, brands: dict[str, str] | None = None) -> dict:
                 "match_type": "official",
             }
 
-    raw_host = hostname(domain)
+    # Scan both the user-controlled label (PSL-private-aware, catches
+    # paypal-login.github.io) and the ICANN registrable label (catches
+    # brand-owned platform apexes like googleapis.com).
+    raw_hosts = {hostname(domain), icann_hostname(domain)}
+    candidates = [c for raw_host in raw_hosts for c in _candidates(raw_host)]
     best = dict(_NO_MATCH)
     for brand in brands:
-        for candidate, via_leet, via_part in _candidates(raw_host):
+        for candidate, via_leet, via_part in candidates:
             max_len = max(len(candidate), len(brand), 1)
             contains = brand in candidate and candidate != brand
             # Length gap bounds Levenshtein distance from below, so a big gap

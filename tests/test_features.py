@@ -127,3 +127,27 @@ def test_unknown_domain_age_adds_no_rule_score():
     features = extract("nobody-knows.com")
     assert features["age"]["age_days"] is None
     assert not any("registered" in r for r in features["rules"]["rule_reasons"])
+
+
+def test_hostname_uses_psl_private_domains_for_shared_hosts():
+    """On shared-hosting platforms the user-controlled label is the hostname."""
+    assert hostname("paypal-login.github.io") == "paypal-login"
+    assert hostname("fake-bank.pages.dev") == "fake-bank"
+
+
+def test_brand_detected_in_shared_hosting_subdomain():
+    from features.brand import detect
+    result = detect("paypal-login.github.io", brands=_BRANDS)
+    assert result["matched_brand"] == "Paypal"
+    assert result["match_type"] == "embedded"
+
+
+def test_extract_shared_hosting_provider_adds_rule_weight():
+    import config
+    flagged = extract("evil.github.io", shared_hosting_provider="github.io")
+    base = extract("evil.github.io")
+    assert flagged["shared_hosting"]["provider"] == "github.io"
+    assert base["shared_hosting"]["provider"] is None
+    assert (flagged["rules"]["rule_score"]
+            == base["rules"]["rule_score"] + config.SHARED_HOSTING_WEIGHT)
+    assert any("shared" in r.lower() for r in flagged["rules"]["rule_reasons"])

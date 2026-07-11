@@ -5,6 +5,10 @@ import tldextract
 # suffix_list_urls=() disables runtime PSL fetching — uses the snapshot
 # bundled with the tldextract package, keeping the daemon fully offline.
 _tld_extract = tldextract.TLDExtract(suffix_list_urls=())
+# Private-domain-aware extraction: on shared-hosting platforms (github.io,
+# pages.dev, ... — the PSL private section) the user-controlled label is the
+# hostname that lexical/brand analysis must inspect.
+_tld_extract_private = tldextract.TLDExtract(suffix_list_urls=(), include_psl_private_domains=True)
 
 _VOWELS = set("aeiou")
 _WORD_HINTS = {
@@ -25,9 +29,18 @@ def registered_domain(domain: str) -> str:
     return ".".join(labels[-2:])
 
 
-def hostname(domain: str) -> str:
+def icann_hostname(domain: str) -> str:
+    """Registrable label under ICANN suffixes only (ignores PSL private domains)."""
     domain = domain.rstrip(".").lower()
     ext = _tld_extract(domain)
+    if ext.domain:
+        return ext.domain
+    return registered_domain(domain).split(".")[0]
+
+
+def hostname(domain: str) -> str:
+    domain = domain.rstrip(".").lower()
+    ext = _tld_extract_private(domain)
     if ext.domain:
         return ext.domain
     return registered_domain(domain).split(".")[0]

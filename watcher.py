@@ -12,6 +12,7 @@ import time
 
 from brands import get_brand_map
 from rdap import get_domain_age_days
+from shared_hosting import get_shared_hosting_suffixes, shared_hosting_provider
 from pihole_client import PiholeClient, extract_domains_from_lines
 from classifier import DomainClassifier
 from domain_policy import should_skip_classification
@@ -80,11 +81,25 @@ class ClassifierWorker(threading.Thread):
                     logger.error(f"Failed to block subdomain {domain}: {e}", exc_info=True)
                 return
 
+        # Shared-hosting detection: subdomains on user-content platforms are
+        # owned by untrusted users, so the provider's popularity or age must
+        # not vouch for them.
+        provider = None
+        try:
+            match = shared_hosting_provider(domain, get_shared_hosting_suffixes(self._state_db))
+            if match and domain.rstrip(".").lower() != match:
+                provider = match
+        except Exception as e:
+            logger.warning(f"Shared-hosting check failed for {domain}: {e}")
+
         # Popularity allowlist: established apex domains (Tranco rank within
-        # threshold) skip LLM classification — unless a threat feed knows them.
+        # threshold) skip LLM classification — unless a threat feed knows them
+        # or the hostname is user content on a shared host.
         try:
             rank = self._state_db.get_popularity_rank(apex)
-            if rank is not None and not (
+            if rank is not None and provider:
+                logger.info(f"{domain}: apex {apex} popular (rank={rank}) but hostname is user content on shared host {provider} — classifying")
+            elif rank is not None and not (
                 self._state_db.is_threat_domain_known(domain)
                 or self._state_db.is_threat_domain_known(apex)
             ):
@@ -102,7 +117,7 @@ class ClassifierWorker(threading.Thread):
 
         brands = self._get_brands()
         try:
-            features = extract(domain, brands=brands)
+            features = extract(domain, brands=brands, shared_hosting_provider=provider)
         except Exception as e:
             logger.error(f"Feature extraction failed for {domain}: {e}", exc_info=True)
             return
@@ -126,8 +141,10 @@ class ClassifierWorker(threading.Thread):
 
         # RDAP age lookup only for domains that reach the LLM path — network
         # call, so pre-filtered domains never trigger it. Fail-open: age=None.
+        # Skipped on shared hosting: the provider apex's age says nothing
+        # about the subdomain owner.
         age_days = None
-        if RDAP_ENABLED:
+        if RDAP_ENABLED and not provider:
             try:
                 age_days = get_domain_age_days(apex or domain, self._state_db)
                 if age_days is not None:
@@ -136,7 +153,8 @@ class ClassifierWorker(threading.Thread):
                 logger.warning(f"RDAP age lookup failed for {domain}: {e}")
 
         try:
-            result = self._classifier.classify(domain, brands=brands, domain_age_days=age_days)
+            result = self._classifier.classify(domain, brands=brands, domain_age_days=age_days,
+                                               shared_hosting_provider=provider)
         except Exception as e:
             logger.error(f"Classifier failed for {domain}: {e}", exc_info=True)
             return

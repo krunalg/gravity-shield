@@ -12,6 +12,11 @@ from brands import get_brand_map
 from classifier import DomainClassifier
 from features.extractor import extract
 from popularity import fetch_popularity_list
+from shared_hosting import (
+    fetch_psl_private_suffixes,
+    get_shared_hosting_suffixes,
+    shared_hosting_provider,
+)
 from threat_intel import fetch_feed
 from pihole_client import PiholeClient
 from state_db import StateDB
@@ -54,6 +59,10 @@ class ThreatIntelSyncer(threading.Thread):
             self._sync_popularity()
         except Exception as e:
             logger.error(f"Popularity list sync failed: {e}", exc_info=True)
+        try:
+            self._sync_shared_hosting()
+        except Exception as e:
+            logger.error(f"Shared-hosting suffix sync failed: {e}", exc_info=True)
         self._check_feed_freshness()
         total_added = 0
         for feed_cfg in self._feeds:
@@ -104,6 +113,24 @@ class ThreatIntelSyncer(threading.Thread):
             domains_skipped=0,
         )
         logger.info(f"Popularity list synced: {len(ranks)} domains (rank ≤ {POPULARITY_RANK_THRESHOLD})")
+
+    def _sync_shared_hosting(self):
+        """Refresh the PSL private-domain suffix snapshot if due (weekly by default)."""
+        hours = self._state_db.hours_since_last_sync(PSL_FEED_NAME)
+        if hours is not None and hours < PSL_SYNC_INTERVAL_HOURS:
+            logger.debug(f"PSL private suffixes fresh ({hours:.1f}h old), skipping sync")
+            return
+        suffixes = fetch_psl_private_suffixes()
+        if not suffixes:
+            logger.warning("PSL fetch returned no private suffixes — keeping existing snapshot")
+            return
+        self._state_db.replace_shared_hosting_suffixes(suffixes)
+        self._state_db.log_sync_run(
+            feed_name=PSL_FEED_NAME,
+            domains_added=len(suffixes),
+            domains_skipped=0,
+        )
+        logger.info(f"PSL private suffixes synced: {len(suffixes)} shared-hosting providers")
 
     def _check_feed_freshness(self):
         for feed_cfg in self._feeds:
@@ -171,10 +198,40 @@ class ThreatIntelSyncer(threading.Thread):
         from features.lexical import registered_domain
 
         brands = get_brand_map(self._state_db)
+        shared_suffixes = get_shared_hosting_suffixes(self._state_db)
         verified = []
         skipped_count = 0
         popular_skipped = 0
+        shared_blocked = 0
         for domain in domains:
+            host = domain.rstrip(".").lower()
+            # Shared-hosting / user-content platforms: each subdomain has a
+            # distinct, untrusted owner. The provider's popularity is
+            # irrelevant — block the FULL hostname exactly as fed.
+            provider = shared_hosting_provider(host, shared_suffixes)
+            if provider:
+                if host == provider or host == f"www.{provider}":
+                    logger.info(f"Feed {source}: not blocking {domain} — it IS shared-hosting provider {provider}")
+                    self._state_db.log_classification(
+                        domain=domain,
+                        category=category,
+                        confidence=0.0,
+                        reason=f"Feed {source} hit, but {domain} is the shared-hosting provider itself — not blocked",
+                        blocked=False,
+                    )
+                    continue
+                shared_blocked += 1
+                logger.info(f"Feed {source}: blocked full hostname {domain} — user content on shared-hosting provider {provider}")
+                self._state_db.log_classification(
+                    domain=domain,
+                    category=category,
+                    confidence=1.0,
+                    reason=f"Feed {source} hit on shared-hosting provider {provider} — blocked full hostname",
+                    blocked=True,
+                )
+                verified.append(domain)
+                continue
+
             # Feeds list URLs, often hosted on compromised legitimate sites.
             # Never auto-block an apex established enough to hold a Tranco rank.
             apex = registered_domain(domain)
@@ -205,12 +262,14 @@ class ThreatIntelSyncer(threading.Thread):
             )
             if passes:
                 verified.append(domain)
+                logger.debug(f"Feed {source}: blocked registered domain {domain} (score={rule_score})")
             else:
                 skipped_count += 1
-                logger.debug(f"Feed {source}: rule-skipped {domain} (score={rule_score})")
+                logger.debug(f"Feed {source}: skipped {domain} — score {rule_score} below threshold {RULE_SCORE_THRESHOLD}")
         logger.info(
-            f"Feed {source}: rule-verified {len(verified)} domains, "
-            f"rule-skipped {skipped_count} (score<{RULE_SCORE_THRESHOLD}), "
+            f"Feed {source}: rule-verified {len(verified)} domains "
+            f"(shared-hosting full-hostname blocks: {shared_blocked}), "
+            f"score-skipped {skipped_count} (score<{RULE_SCORE_THRESHOLD}), "
             f"popularity-skipped {popular_skipped}"
         )
         return verified

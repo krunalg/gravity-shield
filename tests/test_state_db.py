@@ -128,3 +128,18 @@ def test_threat_domains_last_seen_migration_backfills_from_added_at(tmp_path):
     legacy = state_db.StateDB(path)
     assert legacy.get_expired_threat_domains(days=30) == ["legacy.ru"]
     legacy.close()
+
+
+# ── shared hosting suffixes ───────────────────────────────────────────────────
+
+def test_shared_hosting_suffixes_empty_initially(db):
+    assert db.get_shared_hosting_suffixes() == set()
+
+def test_replace_shared_hosting_suffixes_roundtrip(db):
+    db.replace_shared_hosting_suffixes({"github.io", "pages.dev"})
+    assert db.get_shared_hosting_suffixes() == {"github.io", "pages.dev"}
+
+def test_replace_shared_hosting_suffixes_clears_previous(db):
+    db.replace_shared_hosting_suffixes({"old.example"})
+    db.replace_shared_hosting_suffixes({"new.example"})
+    assert db.get_shared_hosting_suffixes() == {"new.example"}
