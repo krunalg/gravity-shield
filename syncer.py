@@ -62,7 +62,30 @@ class ThreatIntelSyncer(threading.Thread):
                 total_added += added
             except Exception as e:
                 logger.error(f"Feed {feed_cfg.get('name', feed_cfg.get('url'))}: unhandled error during sync: {e}", exc_info=True)
+        try:
+            self._expire_stale_blocks()
+        except Exception as e:
+            logger.error(f"TI block expiry failed: {e}", exc_info=True)
         logger.info(f"Threat intel sync complete — {total_added} new domains added across all feeds")
+
+    def _expire_stale_blocks(self):
+        """Unblock TI: domains not re-seen in any feed for TI_BLOCK_EXPIRY_DAYS.
+
+        Feed IOCs churn quickly (URLhaus entries live days, not months) — expiring
+        stale entries keeps gravity.db from accumulating dead blocks forever.
+        """
+        if not TI_BLOCK_EXPIRY_DAYS or TI_BLOCK_EXPIRY_DAYS <= 0:
+            return
+        expired = self._state_db.get_expired_threat_domains(days=TI_BLOCK_EXPIRY_DAYS)
+        if not expired:
+            logger.debug("TI block expiry: no stale domains")
+            return
+        removed = self._pihole.remove_from_denylist(expired, comment_prefix="TI:")
+        self._state_db.delete_threat_domains(expired)
+        logger.info(
+            f"TI block expiry: {len(expired)} domains not re-seen in "
+            f"{TI_BLOCK_EXPIRY_DAYS}d — removed {removed} from Pi-hole denylist"
+        )
 
     def _sync_popularity(self):
         """Refresh the Tranco popularity allowlist if it is due (weekly by default)."""
@@ -103,6 +126,9 @@ class ThreatIntelSyncer(threading.Thread):
             logger.info(f"Feed {name}: 0 domains fetched (empty or error)")
             self._state_db.log_sync_run(feed_name=name, domains_added=0, domains_skipped=0)
             return 0
+
+        # Refresh last_seen for every fetched domain so re-listed IOCs never expire.
+        self._state_db.touch_threat_domains(domains)
 
         new_domains = [
             d for d in domains

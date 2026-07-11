@@ -54,7 +54,8 @@ class StateDB:
             CREATE TABLE IF NOT EXISTS threat_domains (
                 domain TEXT PRIMARY KEY,
                 feed_name TEXT NOT NULL,
-                added_at TEXT NOT NULL
+                added_at TEXT NOT NULL,
+                last_seen TEXT
             );
             CREATE TABLE IF NOT EXISTS popular_domains (
                 domain TEXT PRIMARY KEY,
@@ -96,6 +97,14 @@ class StateDB:
                 self._conn().execute("ALTER TABLE seen_domains ADD COLUMN last_seen TEXT")
                 # backfill last_seen = first_seen for existing rows
                 self._conn().execute("UPDATE seen_domains SET last_seen = first_seen WHERE last_seen IS NULL")
+
+        # threat_domains: add last_seen if missing
+        threat_columns = {row["name"] for row in self._conn().execute("PRAGMA table_info(threat_domains)")}
+        if "last_seen" not in threat_columns:
+            with suppress(sqlite3.OperationalError):
+                self._conn().execute("ALTER TABLE threat_domains ADD COLUMN last_seen TEXT")
+        with suppress(sqlite3.OperationalError):
+            self._conn().execute("UPDATE threat_domains SET last_seen = added_at WHERE last_seen IS NULL")
 
         self._conn().commit()
 
@@ -192,17 +201,49 @@ class StateDB:
         return cur.fetchone() is not None
 
     def mark_threat_domain_known(self, domain: str, feed: str):
+        now = _now()
         self._conn().execute(
-            "INSERT OR IGNORE INTO threat_domains (domain, feed_name, added_at) VALUES (?,?,?)",
-            (domain, feed, _now())
+            """INSERT INTO threat_domains (domain, feed_name, added_at, last_seen) VALUES (?,?,?,?)
+               ON CONFLICT(domain) DO UPDATE SET last_seen=excluded.last_seen""",
+            (domain, feed, now, now)
         )
         self._conn().commit()
 
     def bulk_mark_threat_domains(self, domains: list[str], feed: str):
         now = _now()
         self._conn().executemany(
-            "INSERT OR IGNORE INTO threat_domains (domain, feed_name, added_at) VALUES (?,?,?)",
-            [(d, feed, now) for d in domains]
+            """INSERT INTO threat_domains (domain, feed_name, added_at, last_seen) VALUES (?,?,?,?)
+               ON CONFLICT(domain) DO UPDATE SET last_seen=excluded.last_seen""",
+            [(d, feed, now, now) for d in domains]
+        )
+        self._conn().commit()
+
+    def touch_threat_domains(self, domains: list[str]):
+        """Refresh last_seen for domains re-observed in a feed; unknown domains ignored."""
+        if not domains:
+            return
+        now = _now()
+        placeholders = ",".join("?" * len(domains))
+        self._conn().execute(
+            f"UPDATE threat_domains SET last_seen=? WHERE domain IN ({placeholders})",
+            [now, *domains]
+        )
+        self._conn().commit()
+
+    def get_expired_threat_domains(self, days: float) -> list[str]:
+        """Domains not re-seen in any feed within the last `days` days."""
+        cur = self._conn().execute(
+            f"""SELECT domain FROM threat_domains
+                WHERE last_seen < datetime('now', '-{float(days)} days')""",
+        )
+        return [row["domain"] for row in cur.fetchall()]
+
+    def delete_threat_domains(self, domains: list[str]):
+        if not domains:
+            return
+        placeholders = ",".join("?" * len(domains))
+        self._conn().execute(
+            f"DELETE FROM threat_domains WHERE domain IN ({placeholders})", domains
         )
         self._conn().commit()
 

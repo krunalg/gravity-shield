@@ -104,6 +104,39 @@ class PiholeClient:
             logger.debug("No new domains were added to denylist")
         return added
 
+    def remove_from_denylist(self, domains: list[str], comment_prefix: str = "TI:") -> int:
+        """Remove domains this daemon added (matched by comment prefix). Returns count removed.
+
+        Only rows whose comment starts with `comment_prefix` are touched, so
+        manually added or AI-blocked entries are never removed by feed expiry.
+        """
+        if not domains:
+            logger.debug("remove_from_denylist called with empty domain list")
+            return 0
+        removed = 0
+        conn = None
+        try:
+            conn = sqlite3.connect(self._db_path)
+            placeholders = ",".join("?" * len(domains))
+            cur = conn.execute(
+                f"""DELETE FROM domainlist
+                    WHERE type=1 AND domain IN ({placeholders})
+                    AND comment LIKE ?""",
+                [d.lower() for d in domains] + [comment_prefix + "%"]
+            )
+            removed = cur.rowcount
+            conn.commit()
+        except Exception as e:
+            logger.error(f"Error while removing domains from denylist: {e}", exc_info=True)
+        finally:
+            if conn:
+                conn.close()
+
+        if removed > 0:
+            logger.info(f"Removed {removed} expired '{comment_prefix}' domains from Pi-hole denylist")
+            self._schedule_reload()
+        return removed
+
     def flush_reload(self):
         with self._reload_lock:
             timer = self._reload_timer

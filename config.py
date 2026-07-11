@@ -22,6 +22,7 @@ RULE_PREFILTER_THRESHOLD = 15  # skip Ollama if rule_score below this — auto-a
 BLOCK_RULE_SCORE_FLOOR = 15    # watcher: deterministic rule_score floor for LLM-driven blocks
 SEEN_DOMAIN_TTL_DAYS = 7       # re-classify domains not seen in this many days
 FEED_STALENESS_WARN_HOURS = 24 # warn if a feed hasn't synced in this many hours
+TI_BLOCK_EXPIRY_DAYS = 30      # unblock TI: feed domains not re-seen in this many days (0 = never expire)
 BRAND_MATCH_THRESHOLD = 0.80
 PUNYCODE_WEIGHT = 35
 HIGH_RISK_TLDS = {".ru", ".xyz", ".tk", ".pw", ".cc", ".top", ".click", ".info"}

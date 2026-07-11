@@ -306,7 +306,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 120 tests.
+Current suite: 131 tests.
 
 Covered areas:
 
@@ -319,6 +319,7 @@ Covered areas:
 - threat-intel parsing
 - threat-intel rule-based verification (URLhaus always passes, low-score domains skipped)
 - feed error isolation (one bad feed does not crash the sync cycle)
+- TI block expiry (last_seen refresh on re-listing, comment-prefix-guarded removal, disable with 0)
 - watcher skip policy
 - queue-based enqueue and drop-when-full behavior
 - rule pre-filter (low-score domains skip LLM)
@@ -332,8 +333,6 @@ Covered areas:
 
 ## Future Work
 
-- TI block expiry: URLhaus entries churn within days — remove `TI:` blocks not
-  re-seen in feeds for N days instead of accumulating forever
 - DNS/ASN reputation (Spamhaus ASN-DROP feed + GeoLite2-ASN offline db;
   resolve via upstream DNS directly, not through Pi-hole, to avoid loops)
 - TLS certificate analysis — feasible but opt-in only: grabbing certs means

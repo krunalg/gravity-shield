@@ -84,3 +84,47 @@ def test_domain_registration_cache_upsert(db):
     db.cache_domain_registration("evil.com", None)
     db.cache_domain_registration("evil.com", "2024-01-01T00:00:00+00:00")
     assert db.get_domain_registration("evil.com")["created_at"] == "2024-01-01T00:00:00+00:00"
+
+
+# ── TI block expiry ───────────────────────────────────────────────────────────
+
+def test_touch_threat_domains_refreshes_last_seen(db):
+    db.mark_threat_domain_known("old.ru", feed="URLhaus")
+    db._conn().execute("UPDATE threat_domains SET last_seen='2020-01-01T00:00:00+00:00'")
+    db._conn().commit()
+    db.touch_threat_domains(["old.ru", "not-tracked.com"])
+    assert db.get_expired_threat_domains(days=30) == []
+
+def test_get_expired_threat_domains_returns_stale_only(db):
+    db.mark_threat_domain_known("stale.ru", feed="URLhaus")
+    db.mark_threat_domain_known("fresh.ru", feed="URLhaus")
+    db._conn().execute(
+        "UPDATE threat_domains SET last_seen='2020-01-01T00:00:00+00:00' WHERE domain='stale.ru'"
+    )
+    db._conn().commit()
+    assert db.get_expired_threat_domains(days=30) == ["stale.ru"]
+
+def test_delete_threat_domains_removes_rows(db):
+    db.mark_threat_domain_known("gone.ru", feed="URLhaus")
+    db.delete_threat_domains(["gone.ru"])
+    assert db.is_threat_domain_known("gone.ru") is False
+
+def test_threat_domains_last_seen_migration_backfills_from_added_at(tmp_path):
+    import sqlite3
+    path = str(tmp_path / "legacy.db")
+    conn = sqlite3.connect(path)
+    conn.execute(
+        """CREATE TABLE threat_domains (
+            domain TEXT PRIMARY KEY,
+            feed_name TEXT NOT NULL,
+            added_at TEXT NOT NULL
+        )"""
+    )
+    conn.execute(
+        "INSERT INTO threat_domains VALUES ('legacy.ru','URLhaus','2020-01-01T00:00:00+00:00')"
+    )
+    conn.commit()
+    conn.close()
+    legacy = state_db.StateDB(path)
+    assert legacy.get_expired_threat_domains(days=30) == ["legacy.ru"]
+    legacy.close()

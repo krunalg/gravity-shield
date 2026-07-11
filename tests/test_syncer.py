@@ -212,3 +212,72 @@ def test_syncer_never_blocks_popular_apex_from_feed():
     logged = {c.kwargs["domain"]: c.kwargs["blocked"] for c in state.log_classification.call_args_list}
     assert logged["storage.google.com"] is False
     assert logged["evil.com"] is True
+
+
+def test_syncer_expires_stale_ti_blocks():
+    """Domains not re-seen in feeds for TI_BLOCK_EXPIRY_DAYS are unblocked."""
+    state = MagicMock()
+    state.get_expired_threat_domains.return_value = ["stale.ru"]
+    pihole = MagicMock()
+    pihole.remove_from_denylist.return_value = 1
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    syncer._expire_stale_blocks()
+
+    state.get_expired_threat_domains.assert_called_once()
+    pihole.remove_from_denylist.assert_called_once_with(["stale.ru"], comment_prefix="TI:")
+    state.delete_threat_domains.assert_called_once_with(["stale.ru"])
+
+
+def test_syncer_expiry_disabled_when_days_zero():
+    state = MagicMock()
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.TI_BLOCK_EXPIRY_DAYS", 0):
+        syncer._expire_stale_blocks()
+
+    state.get_expired_threat_domains.assert_not_called()
+    pihole.remove_from_denylist.assert_not_called()
+
+
+def test_syncer_expiry_no_stale_domains_noop():
+    state = MagicMock()
+    state.get_expired_threat_domains.return_value = []
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    syncer._expire_stale_blocks()
+
+    pihole.remove_from_denylist.assert_not_called()
+    state.delete_threat_domains.assert_not_called()
+
+
+def test_syncer_touches_last_seen_for_fetched_feed_domains():
+    """Every domain seen in a feed refreshes last_seen, even if already known."""
+    state = MagicMock()
+    state.get_popularity_rank.return_value = None
+    state.is_threat_domain_known.side_effect = lambda d: d == "known.ru"
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_feed", return_value=["known.ru", "new.ru"]):
+        syncer._sync_one_feed(syncer._feeds[0])
+
+    state.touch_threat_domains.assert_called_once_with(["known.ru", "new.ru"])
+
+
+def test_syncer_cycle_runs_expiry():
+    state = MagicMock()
+    state.is_threat_domain_known.return_value = False
+    state.get_popularity_rank.return_value = None
+    state.hours_since_last_sync.return_value = 1.0
+    state.get_expired_threat_domains.return_value = []
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_feed", return_value=[]):
+        syncer._sync_all_feeds()
+
+    state.get_expired_threat_domains.assert_called_once()

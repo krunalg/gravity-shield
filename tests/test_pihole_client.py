@@ -290,3 +290,59 @@ def test_add_to_denylist_batches_reload_until_interval_or_flush(tmp_path):
         text=True,
         timeout=15,
     )
+
+
+def test_remove_from_denylist_removes_only_ti_comment_rows(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.executemany(
+        "INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment) VALUES (?,1,1,0,0,?)",
+        [
+            ("stale.ru", "TI:MALWARE:URLhaus"),
+            ("manual.com", "added by hand"),
+            ("ai-blocked.xyz", "AI:PHISHING:0.95"),
+        ],
+    )
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    removed = client.remove_from_denylist(
+        ["stale.ru", "manual.com", "ai-blocked.xyz", "absent.com"],
+        comment_prefix="TI:",
+    )
+    assert removed == 1
+
+    conn = sqlite3.connect(db_path)
+    remaining = [r[0] for r in conn.execute("SELECT domain FROM domainlist")]
+    conn.close()
+    assert "stale.ru" not in remaining
+    assert "manual.com" in remaining
+    assert "ai-blocked.xyz" in remaining
+
+
+def test_remove_from_denylist_empty_list_noop(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.commit()
+    conn.close()
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    assert client.remove_from_denylist([], comment_prefix="TI:") == 0
