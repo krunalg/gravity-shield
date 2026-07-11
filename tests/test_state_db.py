@@ -143,3 +143,38 @@ def test_replace_shared_hosting_suffixes_clears_previous(db):
     db.replace_shared_hosting_suffixes({"old.example"})
     db.replace_shared_hosting_suffixes({"new.example"})
     assert db.get_shared_hosting_suffixes() == {"new.example"}
+
+
+# ── ASN reputation ────────────────────────────────────────────────────────────
+
+def test_bad_asn_unknown_initially(db):
+    assert db.is_bad_asn(205112) is False
+
+def test_replace_bad_asns_roundtrip(db):
+    db.replace_bad_asns({205112, 401199})
+    assert db.is_bad_asn(205112) is True
+    assert db.is_bad_asn(13335) is False
+
+def test_replace_bad_asns_clears_previous(db):
+    db.replace_bad_asns({111})
+    db.replace_bad_asns({222})
+    assert db.is_bad_asn(111) is False
+    assert db.is_bad_asn(222) is True
+
+def test_domain_asn_cache_roundtrip(db):
+    assert db.get_domain_asn("evil.com") is None
+    db.cache_domain_asn("evil.com", 205112)
+    cached = db.get_domain_asn("evil.com")
+    assert cached["asn"] == 205112
+    assert cached["fetched_at"]
+
+def test_domain_asn_negative_cache_stores_null(db):
+    db.cache_domain_asn("dead.example", None)
+    cached = db.get_domain_asn("dead.example")
+    assert cached["asn"] is None
+    assert cached["fetched_at"]
+
+def test_domain_asn_cache_upsert(db):
+    db.cache_domain_asn("evil.com", None)
+    db.cache_domain_asn("evil.com", 401199)
+    assert db.get_domain_asn("evil.com")["asn"] == 401199

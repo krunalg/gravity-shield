@@ -98,7 +98,7 @@ def test_classifier_worker_classifies_and_blocks(tmp_path):
     with patch("watcher.get_domain_age_days", return_value=None):
         worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None)
     state.log_classification.assert_called_once()
     pihole.add_to_denylist.assert_called_once_with([domain], comment="AI:MALWARE:0.95")
 
@@ -176,7 +176,7 @@ def test_classifier_worker_ignores_popularity_for_threat_feed_domain():
     with patch("watcher.get_domain_age_days", return_value=None):
         worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None)
     pihole.add_to_denylist.assert_called_once()
 
 
@@ -198,7 +198,7 @@ def test_classifier_worker_passes_rdap_age_to_classifier():
         worker._handle_domain(domain)
 
     age.assert_called_once_with("paypa1-secure.xyz", state)
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=4, shared_hosting_provider=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=4, shared_hosting_provider=None, asn_info=None)
 
 
 def test_classifier_worker_rdap_failure_is_fail_open():
@@ -217,7 +217,7 @@ def test_classifier_worker_rdap_failure_is_fail_open():
     with patch("watcher.get_domain_age_days", side_effect=RuntimeError("rdap down")):
         worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None)
 
 
 def test_classifier_worker_shared_hosting_subdomain_not_popularity_allowed():
@@ -243,3 +243,53 @@ def test_classifier_worker_shared_hosting_subdomain_not_popularity_allowed():
 
     clf.classify.assert_called_once()
     pihole.add_to_denylist.assert_called_once()
+
+
+def test_classifier_worker_passes_flagged_asn_to_classifier():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(
+        domain, "C2", 0.95, "DROP-listed network", True
+    )
+    state = _make_worker_state()
+    state.is_bad_asn.return_value = True
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.get_domain_age_days", return_value=None), \
+         patch("watcher.get_domain_asn", return_value=205112):
+        worker._handle_domain(domain)
+
+    clf.classify.assert_called_once_with(
+        domain, brands=_WORKER_BRANDS, domain_age_days=None,
+        shared_hosting_provider=None,
+        asn_info={"asn": 205112, "flagged": True},
+    )
+
+
+def test_classifier_worker_asn_failure_is_fail_open():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(
+        domain, "SAFE", 0.9, "ok", False
+    )
+    state = _make_worker_state()
+    pihole = MagicMock()
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.get_domain_age_days", return_value=None), \
+         patch("watcher.get_domain_asn", side_effect=RuntimeError("dns down")):
+        worker._handle_domain(domain)
+
+    clf.classify.assert_called_once_with(
+        domain, brands=_WORKER_BRANDS, domain_age_days=None,
+        shared_hosting_provider=None,
+        asn_info=None,
+    )

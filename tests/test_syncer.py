@@ -385,3 +385,40 @@ def test_syncer_empty_psl_fetch_keeps_existing_suffixes():
         syncer._sync_shared_hosting()
 
     state.replace_shared_hosting_suffixes.assert_not_called()
+
+
+def test_syncer_syncs_asn_drop_when_due():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_asn_drop", return_value={205112, 401199}) as fetch:
+        syncer._sync_asn_drop()
+
+    fetch.assert_called_once()
+    state.replace_bad_asns.assert_called_once_with({205112, 401199})
+
+
+def test_syncer_skips_asn_drop_sync_when_fresh():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = 1.0
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_asn_drop") as fetch:
+        syncer._sync_asn_drop()
+
+    fetch.assert_not_called()
+
+
+def test_syncer_empty_asn_drop_fetch_keeps_existing_list():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    with patch("syncer.fetch_asn_drop", return_value=set()):
+        syncer._sync_asn_drop()
+
+    state.replace_bad_asns.assert_not_called()

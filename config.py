@@ -34,6 +34,19 @@ PSL_FEED_NAME = "psl-private-domains"
 PSL_SYNC_INTERVAL_HOURS = 168        # weekly, like the Tranco list
 SHARED_HOSTING_REFRESH_SECONDS = 3600  # in-memory suffix cache TTL
 SHARED_HOSTING_WEIGHT = 10           # rule weight: hostname is user content on a shared host
+
+# ── DNS/ASN reputation ────────────────────────────────────────────────────────
+# Domains that resolve into a Spamhaus ASN-DROP network (hijacked or
+# criminal-run ASNs) get a strong rule-score signal. Lookups run only on the
+# watcher LLM path (post-prefilter, low volume) and always fail open.
+ASN_REPUTATION_ENABLED = True
+ASN_DROP_FEED_URL = "https://www.spamhaus.org/drop/asndrop.json"
+ASN_DROP_FEED_NAME = "spamhaus-asn-drop"
+ASN_SYNC_INTERVAL_HOURS = 24
+UPSTREAM_DNS_SERVER = "1.1.1.1"  # resolve directly upstream, never through Pi-hole (loop)
+ASN_LOOKUP_TIMEOUT = 3           # seconds, per DNS query
+ASN_CACHE_DAYS = 7               # domain→ASN cache TTL (hosting moves, positives expire too)
+ASN_DROP_WEIGHT = 60             # rule weight: domain hosted in a DROP-listed ASN
 # User seed for providers the PSL private section does not (yet) list.
 # Same pattern as EXTRA_BRANDS: data-driven primary source + small local seed.
 EXTRA_SHARED_HOSTING_SUFFIXES = {

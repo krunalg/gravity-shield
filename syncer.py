@@ -8,6 +8,7 @@ import logging
 import threading
 import time
 
+from asn_reputation import fetch_asn_drop
 from brands import get_brand_map
 from classifier import DomainClassifier
 from features.extractor import extract
@@ -63,6 +64,10 @@ class ThreatIntelSyncer(threading.Thread):
             self._sync_shared_hosting()
         except Exception as e:
             logger.error(f"Shared-hosting suffix sync failed: {e}", exc_info=True)
+        try:
+            self._sync_asn_drop()
+        except Exception as e:
+            logger.error(f"ASN-DROP sync failed: {e}", exc_info=True)
         self._check_feed_freshness()
         total_added = 0
         for feed_cfg in self._feeds:
@@ -131,6 +136,24 @@ class ThreatIntelSyncer(threading.Thread):
             domains_skipped=0,
         )
         logger.info(f"PSL private suffixes synced: {len(suffixes)} shared-hosting providers")
+
+    def _sync_asn_drop(self):
+        """Refresh the Spamhaus ASN-DROP snapshot if due (daily by default)."""
+        hours = self._state_db.hours_since_last_sync(ASN_DROP_FEED_NAME)
+        if hours is not None and hours < ASN_SYNC_INTERVAL_HOURS:
+            logger.debug(f"ASN-DROP list fresh ({hours:.1f}h old), skipping sync")
+            return
+        asns = fetch_asn_drop()
+        if not asns:
+            logger.warning("ASN-DROP fetch returned no ASNs — keeping existing list")
+            return
+        self._state_db.replace_bad_asns(asns)
+        self._state_db.log_sync_run(
+            feed_name=ASN_DROP_FEED_NAME,
+            domains_added=len(asns),
+            domains_skipped=0,
+        )
+        logger.info(f"ASN-DROP list synced: {len(asns)} flagged ASNs")
 
     def _check_feed_freshness(self):
         for feed_cfg in self._feeds:

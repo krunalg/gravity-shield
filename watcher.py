@@ -11,6 +11,7 @@ import threading
 import time
 
 from brands import get_brand_map
+from asn_reputation import get_domain_asn
 from rdap import get_domain_age_days
 from shared_hosting import get_shared_hosting_suffixes, shared_hosting_provider
 from pihole_client import PiholeClient, extract_domains_from_lines
@@ -152,9 +153,24 @@ class ClassifierWorker(threading.Thread):
             except Exception as e:
                 logger.warning(f"RDAP age lookup failed for {domain}: {e}")
 
+        # ASN reputation: like RDAP, network lookups only on the LLM path.
+        # Fail-open: asn_info=None means "no signal".
+        asn_info = None
+        if ASN_REPUTATION_ENABLED:
+            try:
+                asn = get_domain_asn(domain, self._state_db)
+                if asn is not None:
+                    flagged = bool(self._state_db.is_bad_asn(asn))
+                    asn_info = {"asn": asn, "flagged": flagged}
+                    if flagged:
+                        logger.warning(f"{domain}: hosted in Spamhaus DROP-listed AS{asn}")
+            except Exception as e:
+                logger.warning(f"ASN lookup failed for {domain}: {e}")
+
         try:
             result = self._classifier.classify(domain, brands=brands, domain_age_days=age_days,
-                                               shared_hosting_provider=provider)
+                                               shared_hosting_provider=provider,
+                                               asn_info=asn_info)
         except Exception as e:
             logger.error(f"Classifier failed for {domain}: {e}", exc_info=True)
             return

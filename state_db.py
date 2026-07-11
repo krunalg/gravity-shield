@@ -69,6 +69,14 @@ class StateDB:
                 created_at TEXT,
                 fetched_at TEXT NOT NULL
             );
+            CREATE TABLE IF NOT EXISTS bad_asns (
+                asn INTEGER PRIMARY KEY
+            );
+            CREATE TABLE IF NOT EXISTS domain_asn (
+                domain TEXT PRIMARY KEY,
+                asn INTEGER,
+                fetched_at TEXT NOT NULL
+            );
             CREATE TABLE IF NOT EXISTS sync_log (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 feed_name TEXT NOT NULL,
@@ -312,6 +320,42 @@ class StateDB:
                    ON CONFLICT(domain) DO UPDATE SET
                      created_at=excluded.created_at, fetched_at=excluded.fetched_at""",
                 (domain, created_at, _now())
+            )
+
+    # ── ASN reputation ────────────────────────────────────────────────────────
+
+    def replace_bad_asns(self, asns: set[int]):
+        """Atomically replace the DROP-listed ASN snapshot."""
+        conn = self._conn()
+        with conn:
+            conn.execute("DELETE FROM bad_asns")
+            conn.executemany(
+                "INSERT INTO bad_asns (asn) VALUES (?)",
+                [(a,) for a in asns]
+            )
+
+    def is_bad_asn(self, asn: int) -> bool:
+        cur = self._conn().execute("SELECT 1 FROM bad_asns WHERE asn=?", (asn,))
+        return cur.fetchone() is not None
+
+    def get_domain_asn(self, domain: str) -> dict | None:
+        cur = self._conn().execute(
+            "SELECT asn, fetched_at FROM domain_asn WHERE domain=?", (domain,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {"asn": row["asn"], "fetched_at": row["fetched_at"]}
+
+    def cache_domain_asn(self, domain: str, asn: int | None):
+        conn = self._conn()
+        with conn:
+            conn.execute(
+                """INSERT INTO domain_asn (domain, asn, fetched_at)
+                   VALUES (?,?,?)
+                   ON CONFLICT(domain) DO UPDATE SET
+                     asn=excluded.asn, fetched_at=excluded.fetched_at""",
+                (domain, asn, _now())
             )
 
     # ── sync log ──────────────────────────────────────────────────────────────

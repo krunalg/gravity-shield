@@ -142,3 +142,12 @@ def test_classify_includes_shared_hosting_in_evidence_and_prompt():
     prompt = client.generate.call_args.args[0]
     assert '"shared_hosting_provider": "github.io"' in prompt
     assert "shared_hosting_provider" in classifier.CLASSIFICATION_PROMPT
+
+def test_classify_includes_asn_in_evidence_and_prompt():
+    client = _make_client('{"classification": "C2", "confidence": 0.9, "recommended_action": "BLOCK"}')
+    clf = classifier.DomainClassifier(ollama_client=client)
+    clf.classify("evil-c2.xyz", asn_info={"asn": 205112, "flagged": True})
+    prompt = client.generate.call_args.args[0]
+    assert '"asn": 205112' in prompt
+    assert '"asn_flagged": true' in prompt
+    assert "asn_flagged" in classifier.CLASSIFICATION_PROMPT

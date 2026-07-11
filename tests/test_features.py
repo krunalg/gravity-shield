@@ -151,3 +151,20 @@ def test_extract_shared_hosting_provider_adds_rule_weight():
     assert (flagged["rules"]["rule_score"]
             == base["rules"]["rule_score"] + config.SHARED_HOSTING_WEIGHT)
     assert any("shared" in r.lower() for r in flagged["rules"]["rule_reasons"])
+
+
+def test_extract_flagged_asn_adds_rule_weight():
+    import config
+    flagged = extract("evil-c2.xyz", asn_info={"asn": 205112, "flagged": True})
+    base = extract("evil-c2.xyz")
+    assert flagged["asn"]["asn"] == 205112
+    assert base["asn"]["flagged"] is False
+    assert (flagged["rules"]["rule_score"]
+            == base["rules"]["rule_score"] + config.ASN_DROP_WEIGHT)
+    assert any("drop" in r.lower() for r in flagged["rules"]["rule_reasons"])
+
+
+def test_extract_unflagged_asn_adds_no_weight():
+    plain = extract("evil-c2.xyz", asn_info={"asn": 13335, "flagged": False})
+    base = extract("evil-c2.xyz")
+    assert plain["rules"]["rule_score"] == base["rules"]["rule_score"]

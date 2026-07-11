@@ -4,7 +4,8 @@ from . import brand, dga, digits, entropy, hyphens, lexical, punycode, rules, tl
 def extract(domain: str, threat_context: dict | None = None,
             brands: dict[str, str] | None = None,
             domain_age_days: int | None = None,
-            shared_hosting_provider: str | None = None) -> dict:
+            shared_hosting_provider: str | None = None,
+            asn_info: dict | None = None) -> dict:
     normalized = domain.rstrip(".").lower()
     lexical_features = lexical.analyze(normalized)
     entropy_features = {
@@ -23,6 +24,7 @@ def extract(domain: str, threat_context: dict | None = None,
         "threat_context": threat_context or {},
         "age": {"age_days": domain_age_days},
         "shared_hosting": {"provider": shared_hosting_provider},
+        "asn": asn_info or {"asn": None, "flagged": False},
     }
     features["dga_score"] = dga.score(lexical_features, entropy_features)
     features["rules"] = rules.evaluate(features)

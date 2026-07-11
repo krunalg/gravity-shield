@@ -37,6 +37,10 @@ def evaluate(features: dict) -> dict:
     if features["punycode"]["is_punycode"]:
         score += PUNYCODE_WEIGHT
         reasons.append("Punycode domain")
+    asn = features.get("asn", {})
+    if asn.get("flagged"):
+        score += ASN_DROP_WEIGHT
+        reasons.append(f"Hosted in Spamhaus DROP-listed network (AS{asn.get('asn')})")
     provider = features.get("shared_hosting", {}).get("provider")
     if provider:
         score += SHARED_HOSTING_WEIGHT
