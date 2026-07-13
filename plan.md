@@ -9,18 +9,21 @@ Run a local Pi-hole protection daemon that combines deterministic domain feature
 ```text
 New DNS query
   -> DomainWatcher (tails FTL log)
-  -> never-block / skip policy
+  -> never-block / skip policy (infra + daemon's own endpoints)
   -> StateDB TTL-aware seen-domain check
-  -> queue.Queue(maxsize=500)
+  -> queue.Queue(maxsize=500)  [mark-seen only after successful enqueue]
        -> ClassifierWorker (one domain at a time)
-          -> subdomain apex dedup (skip LLM if apex blocked)
-          -> popularity allowlist (skip LLM if apex in Tranco top list,
-             unless known to a threat feed)
+          -> subdomain apex dedup on the PSL-private apex
+             (skip LLM if apex blocked; expired apexes don't dedup)
+          -> popularity allowlist (skip LLM if apex in Tranco top list —
+             unless threat-feed-known or user content on a shared host)
           -> features.extractor.extract() with runtime brand map
+             + shared-hosting provider signal
           -> rule pre-filter (skip LLM if rule_score < RULE_PREFILTER_THRESHOLD)
-          -> RDAP domain age lookup (cached in StateDB, fail-open)
+          -> RDAP domain age + ASN reputation (+ opt-in TLS cert)
+             — cached in StateDB, fail-open
           -> DomainClassifier / LLM via Ollama
-          -> structured verdict
+          -> structured verdict, gated by deterministic rule score
           -> PiholeClient
           -> gravity.db domainlist
           -> Adaptive Threat Blocklist group
@@ -28,15 +31,20 @@ New DNS query
 
 Threat-intel feed hit
   -> ThreatIntelSyncer (every 6h)
-  -> popularity list sync (Tranco, weekly)
+  -> popularity (Tranco) + PSL private-domains + Spamhaus ASN-DROP syncs
   -> feed freshness alerting (warn if feed not synced in 24h)
-  -> dedupe against StateDB
+  -> dedupe against StateDB (+ last_seen touch for TI expiry;
+     ALL processed domains marked known — no 6h re-verification)
+  -> shared-hosting guard (block FULL hostname on user-content platforms;
+     never the provider apex itself)
   -> popular-apex guard (never auto-block a Tranco-ranked apex —
      feeds list URLs on compromised legitimate sites)
   -> features.extractor.extract(threat_context=...) with runtime brand map
   -> rule-based scoring only (no LLM)
   -> PiholeClient
   -> Adaptive Threat Blocklist group
+  -> TI block expiry (unblock + EXPIRED verdict after 30d not re-seen)
+  -> daily StateDB prune (DB_RETENTION_DAYS)
 ```
 
 ## Implemented Components
@@ -51,7 +59,10 @@ Threat-intel feed hit
 - `popularity.py` Tranco top-list fetcher (zip or plain CSV)
 - `brands.py` runtime brand map derived from the Tranco snapshot + `EXTRA_BRANDS` seed
 - `rdap.py` domain registration age via RDAP (IANA bootstrap), StateDB-cached
-- `daemon.py` thread supervisor — restarts watcher or worker if either dies
+- `shared_hosting.py` PSL private-domains shared-hosting detection (weekly sync, snapshot fallback, EXTRA seed)
+- `asn_reputation.py` Spamhaus ASN-DROP + Team Cymru IP→ASN via upstream DNS (never through Pi-hole)
+- `tls_cert.py` opt-in TLS certificate analysis (refuses non-global IPs)
+- `daemon.py` thread supervisor — restarts watcher, worker, or syncer if any dies
 
 ## Feature Extraction
 
@@ -65,6 +76,10 @@ Threat-intel feed hit
 - punycode/homograph signal
 - brand similarity (brand list derived at runtime — see Brand Detection)
 - DGA score
+- domain registration age (RDAP)
+- shared-hosting provider (analysis targets the user-controlled label)
+- ASN reputation (Spamhaus DROP flag)
+- TLS certificate signals (opt-in)
 - deterministic rule score, severity, and rule reasons
 - optional threat-intel context
 
@@ -306,7 +321,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 199 tests.
+Current suite: 215 tests.
 
 Covered areas:
 

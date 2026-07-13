@@ -6,7 +6,6 @@ except ImportError:
 
 import json
 import logging
-import re
 from dataclasses import dataclass
 from typing import Optional
 
@@ -14,8 +13,6 @@ from features.extractor import extract
 from ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
-
-_JSON_RE = re.compile(r'\{[^{}]+\}', re.DOTALL)
 
 CLASSIFICATION_PROMPT = """You are a DNS security analyst. Classify the domain below using ONLY the pre-computed evidence provided. Do not recalculate any values yourself.
 
@@ -213,10 +210,16 @@ class DomainClassifier:
             return json.loads(text.strip())
         except json.JSONDecodeError:
             pass
-        match = _JSON_RE.search(text)
-        if match:
+        # Scan for the first parseable JSON object — raw_decode handles nested
+        # braces that a flat regex cannot.
+        decoder = json.JSONDecoder()
+        idx = text.find("{")
+        while idx != -1:
             try:
-                return json.loads(match.group())
+                obj, _ = decoder.raw_decode(text, idx)
+                if isinstance(obj, dict):
+                    return obj
             except json.JSONDecodeError:
                 pass
+            idx = text.find("{", idx + 1)
         return None

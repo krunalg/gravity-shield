@@ -431,3 +431,23 @@ def test_migrate_legacy_blocks_is_idempotent(tmp_path):
     mappings = conn.execute("SELECT COUNT(*) FROM domainlist_by_group").fetchone()[0]
     conn.close()
     assert mappings == 1
+
+
+def test_remove_from_denylist_cleans_group_mappings(tmp_path):
+    """Group mappings removed explicitly — don't rely on Pi-hole's delete trigger."""
+    db_path = _gravity_with_groups(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment) VALUES ('stale.ru',1,1,0,0,'TI:MALWARE:URLhaus')"
+    )
+    conn.execute("INSERT INTO domainlist_by_group VALUES (1, 5)")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    assert client.remove_from_denylist(["stale.ru"], comment_prefix="TI:") == 1
+
+    conn = sqlite3.connect(db_path)
+    mappings = conn.execute("SELECT COUNT(*) FROM domainlist_by_group").fetchone()[0]
+    conn.close()
+    assert mappings == 0

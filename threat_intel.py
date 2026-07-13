@@ -38,7 +38,9 @@ def parse_feed_content(content: str,
         if is_url_list and ("://" in line or line.startswith("http")):
             try:
                 parsed = urlparse(line if "://" in line else f"http://{line}")
-                line = parsed.netloc or parsed.path
+                # hostname strips port and credentials; netloc keeps them,
+                # producing junk denylist rows like "evil.com:8080"
+                line = parsed.hostname or parsed.path
             except Exception:
                 continue
 
@@ -100,8 +102,8 @@ def _parse_json_feed(data, feed_cfg: dict) -> list[str]:
                 raw = item[field]
                 try:
                     parsed = urlparse(raw)
-                    if parsed.netloc:
-                        domains.append(parsed.netloc.lower())
+                    if parsed.hostname:
+                        domains.append(parsed.hostname.lower())
                 except Exception:
                     pass
     return list(set(domains))

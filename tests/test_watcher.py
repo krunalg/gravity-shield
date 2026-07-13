@@ -66,6 +66,7 @@ def test_watcher_drops_domain_when_queue_full():
     ])
 
     assert q.qsize() == 1  # still just the blocker, evil.xyz was dropped
+    state.mark_domain_seen.assert_not_called()  # dropped domain must retry next time
 
 
 def _make_worker_state():
@@ -359,3 +360,25 @@ def test_classifier_worker_tls_failure_is_fail_open():
         worker._handle_domain(domain)
 
     assert clf.classify.call_args.kwargs["tls_info"] is None
+
+
+def test_classifier_worker_dedups_on_private_apex_for_shared_hosting():
+    """evil.github.io blocked earlier → cdn.evil.github.io blocks directly,
+    keyed on the PSL-private apex (evil.github.io), not the ICANN apex (github.io)."""
+    clf = MagicMock()
+    state = _make_worker_state()
+    state.get_last_verdict.side_effect = (
+        lambda apex: {"blocked": True} if apex == "evil.github.io" else None
+    )
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    worker._handle_domain("cdn.evil.github.io")
+
+    clf.classify.assert_not_called()
+    pihole.add_to_denylist.assert_called_once_with(
+        ["cdn.evil.github.io"], comment="AI:SUBDOMAIN:evil.github.io"
+    )

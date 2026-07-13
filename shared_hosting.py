@@ -65,6 +65,11 @@ def _snapshot_private_suffixes() -> set[str]:
     return set(with_private.tlds) - set(icann_only.tlds)
 
 
+def invalidate_suffix_cache():
+    """Drop the in-memory suffix cache — call after replacing the DB snapshot."""
+    _SUFFIX_CACHE.update(loaded_at=0.0, suffixes=None)
+
+
 def get_shared_hosting_suffixes(state_db=None) -> set[str]:
     """Shared-hosting suffix set: StateDB PSL snapshot, else bundled tldextract
     snapshot, always merged with the EXTRA_SHARED_HOSTING_SUFFIXES config seed."""

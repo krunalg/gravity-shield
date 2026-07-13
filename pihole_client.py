@@ -147,14 +147,29 @@ class PiholeClient:
         conn = None
         try:
             conn = sqlite3.connect(self._db_path)
-            placeholders = ",".join("?" * len(domains))
-            cur = conn.execute(
-                f"""DELETE FROM domainlist
-                    WHERE type=1 AND domain IN ({placeholders})
-                    AND comment LIKE ?""",
-                [d.lower() for d in domains] + [comment_prefix + "%"]
-            )
-            removed = cur.rowcount
+            has_groups = self._table_exists(conn, "domainlist_by_group")
+            lowered = [d.lower() for d in domains]
+            # Chunked: expired lists can exceed SQLite's variable limit
+            for start in range(0, len(lowered), 500):
+                chunk = lowered[start:start + 500]
+                placeholders = ",".join("?" * len(chunk))
+                ids = [row[0] for row in conn.execute(
+                    f"""SELECT id FROM domainlist
+                        WHERE type=1 AND domain IN ({placeholders})
+                        AND comment LIKE ?""",
+                    [*chunk, comment_prefix + "%"]
+                )]
+                if not ids:
+                    continue
+                id_ph = ",".join("?" * len(ids))
+                conn.execute(f"DELETE FROM domainlist WHERE id IN ({id_ph})", ids)
+                if has_groups:
+                    # Explicit — don't rely on Pi-hole's delete trigger existing
+                    conn.execute(
+                        f"DELETE FROM domainlist_by_group WHERE domainlist_id IN ({id_ph})",
+                        ids
+                    )
+                removed += len(ids)
             conn.commit()
         except Exception as e:
             logger.error(f"Error while removing domains from denylist: {e}", exc_info=True)

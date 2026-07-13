@@ -207,7 +207,11 @@ def test_syncer_never_blocks_popular_apex_from_feed():
         syncer._sync_one_feed(syncer._feeds[0])
 
     pihole.add_to_denylist.assert_called_once_with(["evil.com"], comment="TI:MALWARE:URLhaus")
-    state.bulk_mark_threat_domains.assert_called_once_with(["evil.com"], feed="URLhaus")
+    # ALL processed domains marked known — skipped ones must not be re-verified
+    # (and re-logged) every 6h cycle
+    state.bulk_mark_threat_domains.assert_called_once_with(
+        ["evil.com", "storage.google.com"], feed="URLhaus"
+    )
     # the popular domain is still logged, but not blocked
     logged = {c.kwargs["domain"]: c.kwargs["blocked"] for c in state.log_classification.call_args_list}
     assert logged["storage.google.com"] is False
@@ -422,3 +426,75 @@ def test_syncer_empty_asn_drop_fetch_keeps_existing_list():
         syncer._sync_asn_drop()
 
     state.replace_bad_asns.assert_not_called()
+
+
+def test_syncer_marks_skipped_domains_known_to_stop_relogging():
+    """Score-skipped feed domains marked known: no re-extraction or duplicate
+    classification rows on every 6h cycle."""
+    state = MagicMock()
+    state.is_threat_domain_known.return_value = False
+    state.get_popularity_rank.return_value = None
+    pihole = MagicMock()
+    syncer = ThreatIntelSyncer(
+        state_db=state,
+        pihole_client=pihole,
+        feeds=[{"name": "OpenPhish", "url": "http://feed", "category": "PHISHING"}],
+    )
+
+    with patch("syncer.fetch_feed", return_value=["google.com"]):
+        syncer._sync_one_feed(syncer._feeds[0])
+
+    pihole.add_to_denylist.assert_not_called()
+    state.bulk_mark_threat_domains.assert_called_once_with(["google.com"], feed="OpenPhish")
+
+
+def test_syncer_expiry_logs_unblock_verdict():
+    """Expiry must overwrite the stale blocked=True verdict so subdomain dedup
+    stops auto-blocking under an expired apex."""
+    state = MagicMock()
+    state.get_expired_threat_domains.return_value = ["stale.ru"]
+    pihole = MagicMock()
+    pihole.remove_from_denylist.return_value = 1
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    syncer._expire_stale_blocks()
+
+    call = state.log_classification.call_args
+    assert call.kwargs["domain"] == "stale.ru"
+    assert call.kwargs["blocked"] is False
+
+
+def test_syncer_prunes_state_db_when_due():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    syncer._prune_state()
+
+    state.prune_old_data.assert_called_once()
+
+
+def test_syncer_skips_prune_when_recent():
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = 1.0
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+
+    syncer._prune_state()
+
+    state.prune_old_data.assert_not_called()
+
+
+def test_psl_sync_invalidates_shared_hosting_cache():
+    import shared_hosting
+    state = MagicMock()
+    state.hours_since_last_sync.return_value = None
+    pihole = MagicMock()
+    syncer = _make_syncer(state=state, pihole=pihole)
+    shared_hosting._SUFFIX_CACHE.update(loaded_at=9e12, suffixes={"stale.example"})
+
+    with patch("syncer.fetch_psl_private_suffixes", return_value={"github.io"}):
+        syncer._sync_shared_hosting()
+
+    assert shared_hosting._SUFFIX_CACHE["suffixes"] is None  # cache invalidated

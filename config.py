@@ -6,8 +6,7 @@ OLLAMA_BASE_URL = "http://localhost:11434"
 OLLAMA_MODEL = "granite4.1:3b"
 OLLAMA_CONNECT_TIMEOUT = 5
 OLLAMA_READ_TIMEOUT = 120
-OLLAMA_TIMEOUT = OLLAMA_READ_TIMEOUT
-OLLAMA_MAX_RETRIES = 2
+OLLAMA_MAX_RETRIES = 2   # total attempts
 OLLAMA_NUM_PREDICT = 256
 OLLAMA_TEMPERATURE = 0.1
 
@@ -23,6 +22,8 @@ BLOCK_RULE_SCORE_FLOOR = 15    # watcher: deterministic rule_score floor for LLM
 SEEN_DOMAIN_TTL_DAYS = 7       # re-classify domains not seen in this many days
 FEED_STALENESS_WARN_HOURS = 24 # warn if a feed hasn't synced in this many hours
 TI_BLOCK_EXPIRY_DAYS = 30      # unblock TI: feed domains not re-seen in this many days (0 = never expire)
+DB_RETENTION_DAYS = 90         # prune classification/sync/cache history older than this
+DB_PRUNE_INTERVAL_HOURS = 24   # how often the syncer runs the prune
 
 # ── Shared hosting / user-content platforms ──────────────────────────────────
 # Primary source is the PSL private-domains section (synced weekly into StateDB,

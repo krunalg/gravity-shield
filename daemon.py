@@ -87,6 +87,10 @@ def main():
             worker = ClassifierWorker(classify_queue=classify_queue, classifier=clf,
                                       state_db=state, pihole_client=pihole)
             worker.start()
+        if not syncer.is_alive():
+            logger.error("ThreatIntelSyncer died — restarting")
+            syncer = ThreatIntelSyncer(state_db=state, pihole_client=pihole, classifier=clf)
+            syncer.start()
 
 
 if __name__ == "__main__":

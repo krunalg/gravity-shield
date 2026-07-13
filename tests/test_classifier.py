@@ -161,3 +161,9 @@ def test_classify_includes_tls_in_evidence_and_prompt():
     prompt = client.generate.call_args.args[0]
     assert '"tls_verify_failed": true' in prompt
     assert "tls_verify_failed" in classifier.CLASSIFICATION_PROMPT
+
+def test_parse_response_handles_nested_json_objects():
+    clf = classifier.DomainClassifier(ollama_client=MagicMock())
+    text = 'Sure: {"classification": "SAFE", "confidence": 0.9, "detail": {"note": "nested"}} done'
+    parsed = clf._parse_response(text)
+    assert parsed["classification"] == "SAFE"

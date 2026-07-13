@@ -203,3 +203,46 @@ def test_domain_tls_cache_upsert(db):
                                          "verify_failed": True, "fail_reason": "expired",
                                          "not_before": None})
     assert db.get_domain_tls("evil.example")["info"]["issuer"] == "X"
+
+
+# ── large-list chunking & retention ──────────────────────────────────────────
+
+def _cap_sqlite_vars(db, n=999):
+    import sqlite3 as _s
+    db._conn().setlimit(_s.SQLITE_LIMIT_VARIABLE_NUMBER, n)
+
+def test_touch_threat_domains_handles_lists_beyond_sqlite_var_limit(db):
+    domains = [f"d{i}.example.com" for i in range(1200)]
+    db.bulk_mark_threat_domains(domains, feed="URLhaus")
+    _cap_sqlite_vars(db)
+    db._conn().execute("UPDATE threat_domains SET last_seen='2020-01-01T00:00:00+00:00'")
+    db._conn().commit()
+    db.touch_threat_domains(domains)  # must not raise "too many SQL variables"
+    assert db.get_expired_threat_domains(days=30) == []
+
+def test_delete_threat_domains_handles_large_lists(db):
+    domains = [f"d{i}.example.com" for i in range(1200)]
+    db.bulk_mark_threat_domains(domains, feed="URLhaus")
+    _cap_sqlite_vars(db)
+    db.delete_threat_domains(domains)
+    assert db.is_threat_domain_known("d0.example.com") is False
+
+def test_filter_unseen_handles_large_lists(db):
+    domains = [f"d{i}.example.com" for i in range(1200)]
+    db.mark_domain_seen("d0.example.com")
+    _cap_sqlite_vars(db)
+    unseen = db.filter_unseen(domains)
+    assert "d0.example.com" not in unseen
+    assert len(unseen) == 1199
+
+def test_prune_old_data_removes_stale_rows_keeps_fresh(db):
+    db.log_classification("old.xyz", "MALWARE", 0.9, "x", blocked=True)
+    db.log_classification("new.xyz", "MALWARE", 0.9, "x", blocked=True)
+    db.log_sync_run("URLhaus", 1, 0)
+    db._conn().execute("UPDATE classifications SET classified_at='2020-01-01T00:00:00+00:00' WHERE domain='old.xyz'")
+    db._conn().execute("UPDATE sync_log SET synced_at='2020-01-01T00:00:00+00:00'")
+    db._conn().commit()
+    db.prune_old_data(days=90)
+    domains = [r["domain"] for r in db.get_recent_classifications(limit=10)]
+    assert domains == ["new.xyz"]
+    assert db.get_sync_history(limit=10) == []

@@ -43,3 +43,15 @@ def test_allowlist_edits_picked_up_without_restart(monkeypatch, tmp_path):
         f.write("second.example.com\n")
     os.utime(path, (0, os.stat(path).st_mtime + 5))
     assert domain_policy.is_never_block_domain("second.example.com") is True
+
+
+def test_daemon_infra_hostnames_are_skipped():
+    """The daemon's own feed/RDAP endpoints must not be classified."""
+    assert domain_policy.should_skip_classification("urlhaus.abuse.ch") is True
+    assert domain_policy.should_skip_classification("openphish.com") is True
+    assert domain_policy.should_skip_classification("data.iana.org") is True
+    assert domain_policy.should_skip_classification("publicsuffix.org") is True
+    assert domain_policy.should_skip_classification("www.spamhaus.org") is True
+    assert domain_policy.should_skip_classification("tranco-list.eu") is True
+    # unrelated domains unaffected
+    assert domain_policy.should_skip_classification("evil.com") is False

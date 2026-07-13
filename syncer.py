@@ -16,6 +16,7 @@ from popularity import fetch_popularity_list
 from shared_hosting import (
     fetch_psl_private_suffixes,
     get_shared_hosting_suffixes,
+    invalidate_suffix_cache,
     shared_hosting_provider,
 )
 from threat_intel import fetch_feed
@@ -80,6 +81,10 @@ class ThreatIntelSyncer(threading.Thread):
             self._expire_stale_blocks()
         except Exception as e:
             logger.error(f"TI block expiry failed: {e}", exc_info=True)
+        try:
+            self._prune_state()
+        except Exception as e:
+            logger.error(f"State DB prune failed: {e}", exc_info=True)
         logger.info(f"Threat intel sync complete — {total_added} new domains added across all feeds")
 
     def _expire_stale_blocks(self):
@@ -96,6 +101,16 @@ class ThreatIntelSyncer(threading.Thread):
             return
         removed = self._pihole.remove_from_denylist(expired, comment_prefix="TI:")
         self._state_db.delete_threat_domains(expired)
+        for domain in expired:
+            # Overwrite the stale blocked=True verdict so subdomain dedup in
+            # the watcher stops auto-blocking under an expired apex.
+            self._state_db.log_classification(
+                domain=domain,
+                category="EXPIRED",
+                confidence=0.0,
+                reason=f"TI block expired — not re-seen in feeds for {TI_BLOCK_EXPIRY_DAYS}d",
+                blocked=False,
+            )
         logger.info(
             f"TI block expiry: {len(expired)} domains not re-seen in "
             f"{TI_BLOCK_EXPIRY_DAYS}d — removed {removed} from Pi-hole denylist"
@@ -130,12 +145,21 @@ class ThreatIntelSyncer(threading.Thread):
             logger.warning("PSL fetch returned no private suffixes — keeping existing snapshot")
             return
         self._state_db.replace_shared_hosting_suffixes(suffixes)
+        invalidate_suffix_cache()
         self._state_db.log_sync_run(
             feed_name=PSL_FEED_NAME,
             domains_added=len(suffixes),
             domains_skipped=0,
         )
         logger.info(f"PSL private suffixes synced: {len(suffixes)} shared-hosting providers")
+
+    def _prune_state(self):
+        """Prune old StateDB history if due (daily by default)."""
+        hours = self._state_db.hours_since_last_sync("db-prune")
+        if hours is not None and hours < DB_PRUNE_INTERVAL_HOURS:
+            return
+        self._state_db.prune_old_data(days=DB_RETENTION_DAYS)
+        self._state_db.log_sync_run(feed_name="db-prune", domains_added=0, domains_skipped=0)
 
     def _sync_asn_drop(self):
         """Refresh the Spamhaus ASN-DROP snapshot if due (daily by default)."""
@@ -192,6 +216,12 @@ class ThreatIntelSyncer(threading.Thread):
             return 0
 
         verified_domains = self._verify_domains(new_domains, source=name, category=category)
+
+        # Mark EVERY processed domain known — including popularity/score-skipped
+        # ones — so the next cycle doesn't re-verify and re-log tens of
+        # thousands of unchanged entries every 6 hours.
+        self._state_db.bulk_mark_threat_domains(new_domains, feed=name)
+
         if not verified_domains:
             logger.info(f"Feed {name}: no domains passed rule verification")
             self._state_db.log_sync_run(feed_name=name, domains_added=0, domains_skipped=skipped)
@@ -199,8 +229,6 @@ class ThreatIntelSyncer(threading.Thread):
 
         comment = f"TI:{category}:{name[:30]}"
         added = self._pihole.add_to_denylist(verified_domains, comment=comment)
-
-        self._state_db.bulk_mark_threat_domains(verified_domains, feed=name)
 
         logger.info(f"Feed {name}: added {added} new domains, skipped {skipped} known")
         self._state_db.log_sync_run(feed_name=name, domains_added=added, domains_skipped=skipped)

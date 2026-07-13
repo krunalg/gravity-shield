@@ -76,3 +76,10 @@ def test_default_feeds_do_not_include_unresolvable_digitalside_feed():
 
     assert "https://osint.digitalside.it/Threat-Intel/lists/latestdomains.txt" not in feed_urls
     assert "DigitalSide OSINT" not in feed_names
+
+
+def test_url_list_strips_port_and_credentials():
+    from threat_intel import parse_feed_content
+    content = "http://evil.example.com:8080/kit.zip\nhttps://user:pass@bad.example.net/login\n"
+    domains = set(parse_feed_content(content, is_url_list=True))
+    assert domains == {"evil.example.com", "bad.example.net"}

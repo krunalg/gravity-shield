@@ -25,7 +25,8 @@ def test_parse_cert_extracts_issuer_age_and_sans():
 
 
 def test_fetch_cert_info_verify_failure_is_a_signal():
-    with patch("tls_cert._handshake",
+    with patch("tls_cert._resolve_addr", return_value="93.184.216.34"), \
+         patch("tls_cert._handshake",
                side_effect=ssl.SSLCertVerificationError("self-signed certificate")):
         info = tls_cert.fetch_cert_info("selfsigned.example")
     assert info["verify_failed"] is True
@@ -33,7 +34,8 @@ def test_fetch_cert_info_verify_failure_is_a_signal():
 
 
 def test_fetch_cert_info_connection_failure_returns_none():
-    with patch("tls_cert._handshake", side_effect=OSError("connection refused")):
+    with patch("tls_cert._resolve_addr", return_value="93.184.216.34"), \
+         patch("tls_cert._handshake", side_effect=OSError("connection refused")):
         assert tls_cert.fetch_cert_info("dead.example") is None
 
 
@@ -81,3 +83,18 @@ def test_get_cert_info_fetch_failure_is_negative_cached():
     with patch("tls_cert.fetch_cert_info", return_value=None):
         assert get_cert_info("dead.example", state) is None
     state.cache_domain_tls.assert_called_once_with("dead.example", None)
+
+
+def test_fetch_cert_info_refuses_private_ips():
+    """Prevents the daemon being used to probe LAN hosts via crafted DNS names."""
+    with patch("tls_cert._resolve_addr", return_value="192.168.1.50"), \
+         patch("tls_cert._handshake") as handshake:
+        assert tls_cert.fetch_cert_info("internal.example") is None
+    handshake.assert_not_called()
+
+
+def test_fetch_cert_info_allows_public_ips():
+    with patch("tls_cert._resolve_addr", return_value="93.184.216.34"), \
+         patch("tls_cert._handshake", return_value=CERT_SAMPLE):
+        info = tls_cert.fetch_cert_info("evil.example")
+    assert info["issuer"] == "Let's Encrypt"

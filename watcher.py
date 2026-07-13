@@ -68,17 +68,20 @@ class ClassifierWorker(threading.Thread):
 
     def _handle_domain(self, domain: str):
         from features.extractor import extract
-        from features.lexical import registered_domain
+        from features.lexical import registered_domain, registered_domain_private
 
         # Subdomain deduplication: if the apex domain was already blocked,
-        # block this subdomain directly without an Ollama call.
+        # block this subdomain directly without an Ollama call. Keyed on the
+        # PSL-private-aware apex so a blocked evil.github.io covers its
+        # subdomains without ever keying on the provider (github.io).
         apex = registered_domain(domain)
-        if apex and apex != domain:
-            apex_verdict = self._state_db.get_last_verdict(apex)
+        dedup_apex = registered_domain_private(domain)
+        if dedup_apex and dedup_apex != domain:
+            apex_verdict = self._state_db.get_last_verdict(dedup_apex)
             if apex_verdict and apex_verdict["blocked"]:
-                logger.info(f"Subdomain {domain} → apex {apex} already blocked, blocking directly")
+                logger.info(f"Subdomain {domain} → apex {dedup_apex} already blocked, blocking directly")
                 try:
-                    self._pihole.add_to_denylist([domain], comment=f"AI:SUBDOMAIN:{apex}")
+                    self._pihole.add_to_denylist([domain], comment=f"AI:SUBDOMAIN:{dedup_apex}")
                 except Exception as e:
                     logger.error(f"Failed to block subdomain {domain}: {e}", exc_info=True)
                 return
@@ -282,13 +285,15 @@ class DomainWatcher(threading.Thread):
             return
 
         for domain in new_domains:
+            # Enqueue first, mark seen only on success — a dropped domain must
+            # be retried on its next query, not silenced for the whole TTL.
+            try:
+                self._queue.put_nowait(domain)
+            except queue.Full:
+                logger.warning(f"Classify queue full ({CLASSIFY_QUEUE_SIZE}), dropping {domain}")
+                continue
+            logger.debug(f"Queued {domain} (queue size: {self._queue.qsize()})")
             try:
                 self._state_db.mark_domain_seen(domain)
             except Exception as e:
                 logger.error(f"Failed to mark {domain} as seen: {e}", exc_info=True)
-                continue
-            try:
-                self._queue.put_nowait(domain)
-                logger.debug(f"Queued {domain} (queue size: {self._queue.qsize()})")
-            except queue.Full:
-                logger.warning(f"Classify queue full ({CLASSIFY_QUEUE_SIZE}), dropping {domain}")

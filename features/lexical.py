@@ -29,6 +29,16 @@ def registered_domain(domain: str) -> str:
     return ".".join(labels[-2:])
 
 
+def registered_domain_private(domain: str) -> str:
+    """Registered domain honouring PSL private suffixes: on shared hosting the
+    user-owned unit is e.g. evil.github.io, not github.io."""
+    domain = domain.rstrip(".").lower()
+    ext = _tld_extract_private(domain)
+    if ext.domain and ext.suffix:
+        return f"{ext.domain}.{ext.suffix}"
+    return registered_domain(domain)
+
+
 def icann_hostname(domain: str) -> str:
     """Registrable label under ICANN suffixes only (ignores PSL private domains)."""
     domain = domain.rstrip(".").lower()

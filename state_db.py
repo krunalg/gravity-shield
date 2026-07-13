@@ -5,14 +5,33 @@ except ImportError:
     pass
 
 import json
+import logging
 import sqlite3
 import threading
 from contextlib import suppress
-from datetime import datetime, timezone
+from datetime import datetime, timedelta, timezone
+
+# Stay well under SQLITE_MAX_VARIABLE_NUMBER (999 on older builds) — feed
+# domain lists run to 40k+ entries.
+_SQL_CHUNK = 500
+
+
+def _chunks(items: list, size: int = _SQL_CHUNK):
+    for i in range(0, len(items), size):
+        yield items[i:i + size]
+
+
+logger = logging.getLogger(__name__)
 
 
 def _now() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+def _cutoff(days: float) -> str:
+    """ISO cutoff timestamp `days` ago — same format _now() stores, so string
+    comparison is exact (sqlite datetime() formats differ)."""
+    return (datetime.now(timezone.utc) - timedelta(days=days)).isoformat()
 
 
 class StateDB:
@@ -140,27 +159,39 @@ class StateDB:
         """Return domains not seen within SEEN_DOMAIN_TTL_DAYS (or never seen)."""
         if not domains:
             return []
-        placeholders = ",".join("?" * len(domains))
-        # Re-classify domains whose last_seen is older than TTL
-        cutoff = datetime.now(timezone.utc).replace(
-            hour=0, minute=0, second=0, microsecond=0
-        ).isoformat()
-        # Simple cutoff: domains seen more than TTL days ago are treated as unseen
-        cur = self._conn().execute(
-            f"""SELECT domain FROM seen_domains
-                WHERE domain IN ({placeholders})
-                AND last_seen >= datetime('now', '-{SEEN_DOMAIN_TTL_DAYS} days')""",
-            domains
-        )
-        recently_seen = {row["domain"] for row in cur.fetchall()}
+        cutoff = _cutoff(SEEN_DOMAIN_TTL_DAYS)
+        recently_seen = set()
+        for chunk in _chunks(domains):
+            placeholders = ",".join("?" * len(chunk))
+            cur = self._conn().execute(
+                f"""SELECT domain FROM seen_domains
+                    WHERE domain IN ({placeholders}) AND last_seen >= ?""",
+                [*chunk, cutoff]
+            )
+            recently_seen.update(row["domain"] for row in cur.fetchall())
         return [d for d in domains if d not in recently_seen]
+
+    def prune_old_data(self, days: float = DB_RETENTION_DAYS):
+        """Delete history older than `days` — the DB must not grow forever on a Pi."""
+        cutoff = _cutoff(days)
+        conn = self._conn()
+        with conn:
+            for table, column in (
+                ("classifications", "classified_at"),
+                ("sync_log", "synced_at"),
+                ("seen_domains", "last_seen"),
+                ("domain_asn", "fetched_at"),
+                ("domain_tls", "fetched_at"),
+            ):
+                cur = conn.execute(f"DELETE FROM {table} WHERE {column} < ?", (cutoff,))
+                if cur.rowcount:
+                    logger.info(f"Pruned {cur.rowcount} rows from {table} (older than {days}d)")
 
     def is_domain_seen(self, domain: str) -> bool:
         """Check if domain was seen within TTL window."""
         cur = self._conn().execute(
-            f"""SELECT 1 FROM seen_domains WHERE domain=?
-                AND last_seen >= datetime('now', '-{SEEN_DOMAIN_TTL_DAYS} days')""",
-            (domain,)
+            "SELECT 1 FROM seen_domains WHERE domain=? AND last_seen >= ?",
+            (domain, _cutoff(SEEN_DOMAIN_TTL_DAYS))
         )
         return cur.fetchone() is not None
 
@@ -240,28 +271,30 @@ class StateDB:
         if not domains:
             return
         now = _now()
-        placeholders = ",".join("?" * len(domains))
-        self._conn().execute(
-            f"UPDATE threat_domains SET last_seen=? WHERE domain IN ({placeholders})",
-            [now, *domains]
-        )
+        for chunk in _chunks(domains):
+            placeholders = ",".join("?" * len(chunk))
+            self._conn().execute(
+                f"UPDATE threat_domains SET last_seen=? WHERE domain IN ({placeholders})",
+                [now, *chunk]
+            )
         self._conn().commit()
 
     def get_expired_threat_domains(self, days: float) -> list[str]:
         """Domains not re-seen in any feed within the last `days` days."""
         cur = self._conn().execute(
-            f"""SELECT domain FROM threat_domains
-                WHERE last_seen < datetime('now', '-{float(days)} days')""",
+            "SELECT domain FROM threat_domains WHERE last_seen < ?",
+            (_cutoff(days),)
         )
         return [row["domain"] for row in cur.fetchall()]
 
     def delete_threat_domains(self, domains: list[str]):
         if not domains:
             return
-        placeholders = ",".join("?" * len(domains))
-        self._conn().execute(
-            f"DELETE FROM threat_domains WHERE domain IN ({placeholders})", domains
-        )
+        for chunk in _chunks(domains):
+            placeholders = ",".join("?" * len(chunk))
+            self._conn().execute(
+                f"DELETE FROM threat_domains WHERE domain IN ({placeholders})", chunk
+            )
         self._conn().commit()
 
     # ── popular domains ───────────────────────────────────────────────────────

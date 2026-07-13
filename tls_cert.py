@@ -4,12 +4,19 @@ try:
 except ImportError:
     pass
 
+import ipaddress
 import logging
 import socket
 import ssl
 from datetime import datetime, timezone
 
 logger = logging.getLogger(__name__)
+
+
+def _resolve_addr(domain: str) -> str:
+    """First resolved address for the domain's TLS endpoint."""
+    infos = socket.getaddrinfo(domain, 443, proto=socket.IPPROTO_TCP)
+    return infos[0][4][0]
 
 
 def _handshake(domain: str) -> dict:
@@ -54,6 +61,16 @@ def fetch_cert_info(domain: str) -> dict | None:
     signal and returns a verify_failed dict; an unreachable host or a host
     without TLS is no signal and returns None.
     """
+    try:
+        # Never handshake with non-global addresses: a crafted DNS name must
+        # not turn the daemon into a LAN port prober.
+        addr = ipaddress.ip_address(_resolve_addr(domain))
+        if not addr.is_global:
+            logger.debug(f"TLS fetch refused for {domain}: resolves to non-global {addr}")
+            return None
+    except Exception as e:
+        logger.debug(f"TLS resolution failed for {domain}: {e}")
+        return None
     try:
         cert = _handshake(domain)
     except ssl.SSLCertVerificationError as e:
