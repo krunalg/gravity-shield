@@ -41,6 +41,13 @@ def evaluate(features: dict) -> dict:
     if asn.get("flagged"):
         score += ASN_DROP_WEIGHT
         reasons.append(f"Hosted in Spamhaus DROP-listed network (AS{asn.get('asn')})")
+    tls = features.get("tls", {}) or {}
+    if tls.get("verify_failed"):
+        score += TLS_INVALID_WEIGHT
+        reasons.append(f"TLS certificate failed verification ({tls.get('fail_reason')})")
+    elif tls.get("cert_age_days") is not None and tls["cert_age_days"] <= TLS_NEW_CERT_DAYS:
+        score += TLS_NEW_CERT_WEIGHT
+        reasons.append(f"TLS certificate issued {tls['cert_age_days']} days ago")
     provider = features.get("shared_hosting", {}).get("provider")
     if provider:
         score += SHARED_HOSTING_WEIGHT

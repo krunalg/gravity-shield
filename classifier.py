@@ -34,6 +34,7 @@ Rules:
 - domain_age_days: registration age via RDAP. Under 30 days = strong phishing/malware signal; under 180 = weak signal; null = unknown, ignore it
 - shared_hosting_provider: hostname is user content on this platform (github.io, pages.dev, ...) — the subdomain owner is untrusted and the provider's reputation does NOT vouch for it; judge the subdomain label itself
 - asn_flagged=true: domain resolves into a Spamhaus ASN-DROP network (hijacked or criminal-run) — very strong malicious-hosting signal
+- tls_verify_failed=true: the host presented an invalid certificate (self-signed, expired, hostname mismatch) — suspicious for a domain pretending to be a service; tls_cert_age_days under 14 is a weak phishing signal (free CAs rotate certs often), null tls fields = unknown, ignore
 - High DGA score + high entropy = likely C2/malware
 - Set recommended_action=BLOCK only for MALWARE, PHISHING, C2, RANSOMWARE
 
@@ -79,6 +80,10 @@ def _build_evidence(features: dict) -> dict:
         "shared_hosting_provider": features.get("shared_hosting", {}).get("provider"),
         "asn": features.get("asn", {}).get("asn"),
         "asn_flagged": features.get("asn", {}).get("flagged", False),
+        "tls_issuer": (features.get("tls") or {}).get("issuer"),
+        "tls_cert_age_days": (features.get("tls") or {}).get("cert_age_days"),
+        "tls_verify_failed": (features.get("tls") or {}).get("verify_failed"),
+        "tls_san_count": (features.get("tls") or {}).get("san_count"),
         "threat_intel": {
             "urlhaus_hit": threat.get("urlhaus_hit", False),
             "feed_source": threat.get("feed_source"),
@@ -121,11 +126,13 @@ class DomainClassifier:
                  brands: Optional[dict] = None,
                  domain_age_days: Optional[int] = None,
                  shared_hosting_provider: Optional[str] = None,
-                 asn_info: Optional[dict] = None) -> ClassificationResult:
+                 asn_info: Optional[dict] = None,
+                 tls_info: Optional[dict] = None) -> ClassificationResult:
         features = extract(domain, threat_context=threat_context, brands=brands,
                            domain_age_days=domain_age_days,
                            shared_hosting_provider=shared_hosting_provider,
-                           asn_info=asn_info)
+                           asn_info=asn_info,
+                           tls_info=tls_info)
         evidence = _build_evidence(features)
         rule_score = evidence["rule_score"]
         prompt = CLASSIFICATION_PROMPT.format(

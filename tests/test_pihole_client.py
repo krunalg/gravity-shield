@@ -346,3 +346,88 @@ def test_remove_from_denylist_empty_list_noop(tmp_path):
     conn.close()
     client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
     assert client.remove_from_denylist([], comment_prefix="TI:") == 0
+
+
+def _gravity_with_groups(tmp_path):
+    db_path = str(tmp_path / "gravity.db")
+    conn = sqlite3.connect(db_path)
+    conn.execute("""CREATE TABLE domainlist (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        domain TEXT UNIQUE NOT NULL,
+        type INTEGER NOT NULL DEFAULT 1,
+        enabled INTEGER NOT NULL DEFAULT 1,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        comment TEXT
+    )""")
+    conn.execute("""CREATE TABLE "group" (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        enabled INTEGER NOT NULL,
+        name TEXT UNIQUE NOT NULL,
+        date_added INTEGER NOT NULL,
+        date_modified INTEGER NOT NULL,
+        description TEXT
+    )""")
+    conn.execute("""CREATE TABLE domainlist_by_group (
+        domainlist_id INTEGER NOT NULL,
+        group_id INTEGER NOT NULL,
+        UNIQUE(domainlist_id, group_id)
+    )""")
+    conn.commit()
+    conn.close()
+    return db_path
+
+
+def test_migrate_legacy_blocks_assigns_ai_and_ti_rows_to_group(tmp_path):
+    db_path = _gravity_with_groups(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.executemany(
+        "INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment) VALUES (?,1,1,0,0,?)",
+        [
+            ("legacy-ai.xyz", "AI:MALWARE:0.95"),
+            ("legacy-ti.ru", "TI:MALWARE:URLhaus"),
+            ("manual.com", "added by hand"),
+        ],
+    )
+    # legacy AI row sits in Pi-hole's default group 0
+    conn.execute("INSERT INTO domainlist_by_group VALUES (1, 0)")
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    migrated = client.migrate_legacy_blocks_to_group()
+    assert migrated == 2
+
+    conn = sqlite3.connect(db_path)
+    rows = conn.execute(
+        """SELECT d.domain FROM domainlist d
+           JOIN domainlist_by_group dg ON dg.domainlist_id = d.id
+           JOIN "group" g ON g.id = dg.group_id
+           WHERE g.name='Adaptive Threat Blocklist' ORDER BY d.domain"""
+    ).fetchall()
+    default_group = conn.execute(
+        "SELECT COUNT(*) FROM domainlist_by_group WHERE group_id=0"
+    ).fetchone()[0]
+    conn.close()
+
+    assert [r[0] for r in rows] == ["legacy-ai.xyz", "legacy-ti.ru"]
+    assert default_group == 0  # legacy default-group mapping removed
+
+
+def test_migrate_legacy_blocks_is_idempotent(tmp_path):
+    db_path = _gravity_with_groups(tmp_path)
+    conn = sqlite3.connect(db_path)
+    conn.execute(
+        "INSERT INTO domainlist (domain, type, enabled, date_added, date_modified, comment) VALUES ('a.xyz',1,1,0,0,'AI:C2:0.9')"
+    )
+    conn.commit()
+    conn.close()
+
+    client = pihole_client.PiholeClient(db_path=db_path, reload_cmd=None)
+    assert client.migrate_legacy_blocks_to_group() == 1
+    assert client.migrate_legacy_blocks_to_group() == 1  # re-run safe
+
+    conn = sqlite3.connect(db_path)
+    mappings = conn.execute("SELECT COUNT(*) FROM domainlist_by_group").fetchone()[0]
+    conn.close()
+    assert mappings == 1

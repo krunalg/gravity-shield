@@ -151,3 +151,13 @@ def test_classify_includes_asn_in_evidence_and_prompt():
     assert '"asn": 205112' in prompt
     assert '"asn_flagged": true' in prompt
     assert "asn_flagged" in classifier.CLASSIFICATION_PROMPT
+
+def test_classify_includes_tls_in_evidence_and_prompt():
+    client = _make_client('{"classification": "PHISHING", "confidence": 0.9, "recommended_action": "BLOCK"}')
+    clf = classifier.DomainClassifier(ollama_client=client)
+    clf.classify("evil-c2.xyz", tls_info={"verify_failed": True, "fail_reason": "self-signed",
+                                          "issuer": None, "san_count": 0,
+                                          "cert_age_days": None, "not_before": None})
+    prompt = client.generate.call_args.args[0]
+    assert '"tls_verify_failed": true' in prompt
+    assert "tls_verify_failed" in classifier.CLASSIFICATION_PROMPT

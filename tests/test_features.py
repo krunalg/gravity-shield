@@ -168,3 +168,33 @@ def test_extract_unflagged_asn_adds_no_weight():
     plain = extract("evil-c2.xyz", asn_info={"asn": 13335, "flagged": False})
     base = extract("evil-c2.xyz")
     assert plain["rules"]["rule_score"] == base["rules"]["rule_score"]
+
+
+def test_extract_tls_verify_failure_adds_rule_weight():
+    import config
+    flagged = extract("evil-c2.xyz", tls_info={"verify_failed": True, "fail_reason": "self-signed",
+                                               "issuer": None, "san_count": 0,
+                                               "cert_age_days": None, "not_before": None})
+    base = extract("evil-c2.xyz")
+    assert (flagged["rules"]["rule_score"]
+            == base["rules"]["rule_score"] + config.TLS_INVALID_WEIGHT)
+    assert any("tls" in r.lower() or "certificate" in r.lower()
+               for r in flagged["rules"]["rule_reasons"])
+
+
+def test_extract_brand_new_cert_adds_rule_weight():
+    import config
+    flagged = extract("evil-c2.xyz", tls_info={"verify_failed": False, "fail_reason": None,
+                                               "issuer": "Let's Encrypt", "san_count": 1,
+                                               "cert_age_days": 2, "not_before": "x"})
+    base = extract("evil-c2.xyz")
+    assert (flagged["rules"]["rule_score"]
+            == base["rules"]["rule_score"] + config.TLS_NEW_CERT_WEIGHT)
+
+
+def test_extract_established_cert_adds_no_weight():
+    plain = extract("evil-c2.xyz", tls_info={"verify_failed": False, "fail_reason": None,
+                                             "issuer": "DigiCert", "san_count": 4,
+                                             "cert_age_days": 200, "not_before": "x"})
+    base = extract("evil-c2.xyz")
+    assert plain["rules"]["rule_score"] == base["rules"]["rule_score"]

@@ -1,4 +1,4 @@
-.PHONY: help install test clean setup daemon-start daemon-stop daemon-restart daemon-status logs fix-permissions reset re-setup
+.PHONY: help install test clean setup daemon-start daemon-stop daemon-restart daemon-status logs fix-permissions reset re-setup migrate-blocks
 
 VENV := .venv
 PYTHON := $(VENV)/bin/python3
@@ -19,6 +19,7 @@ help:
 	@echo "    make daemon-restart  Restart systemd daemon"
 	@echo "    make daemon-status   Check daemon status"
 	@echo "    make logs            Tail daemon logs"
+	@echo "    make migrate-blocks  Assign historical AI:/TI: blocks to the Adaptive Threat Blocklist group"
 	@echo ""
 	@echo "  Reset & Cleanup:"
 	@echo "    make reset           Stop daemon, clean config/state/logs"
@@ -38,6 +39,9 @@ test: install
 
 setup: install
 	@bash setup.sh
+
+migrate-blocks: install
+	$(PYTHON) -c "from pihole_client import PiholeClient; print(PiholeClient().migrate_legacy_blocks_to_group(), 'legacy entries assigned to the Adaptive Threat Blocklist group')"
 
 clean:
 	rm -rf $(VENV) .pytest_cache __pycache__ tests/__pycache__ *.pyc

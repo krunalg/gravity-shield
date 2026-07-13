@@ -13,6 +13,7 @@ import time
 from brands import get_brand_map
 from asn_reputation import get_domain_asn
 from rdap import get_domain_age_days
+from tls_cert import get_cert_info
 from shared_hosting import get_shared_hosting_suffixes, shared_hosting_provider
 from pihole_client import PiholeClient, extract_domains_from_lines
 from classifier import DomainClassifier
@@ -167,10 +168,20 @@ class ClassifierWorker(threading.Thread):
             except Exception as e:
                 logger.warning(f"ASN lookup failed for {domain}: {e}")
 
+        # TLS analysis is opt-in: a live handshake connects to the suspected
+        # host from this machine's IP. Fail-open: tls_info=None.
+        tls_info = None
+        if TLS_ANALYSIS_ENABLED:
+            try:
+                tls_info = get_cert_info(domain, self._state_db)
+            except Exception as e:
+                logger.warning(f"TLS analysis failed for {domain}: {e}")
+
         try:
             result = self._classifier.classify(domain, brands=brands, domain_age_days=age_days,
                                                shared_hosting_provider=provider,
-                                               asn_info=asn_info)
+                                               asn_info=asn_info,
+                                               tls_info=tls_info)
         except Exception as e:
             logger.error(f"Classifier failed for {domain}: {e}", exc_info=True)
             return

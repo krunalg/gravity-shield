@@ -178,3 +178,28 @@ def test_domain_asn_cache_upsert(db):
     db.cache_domain_asn("evil.com", None)
     db.cache_domain_asn("evil.com", 401199)
     assert db.get_domain_asn("evil.com")["asn"] == 401199
+
+
+# ── TLS cert cache ────────────────────────────────────────────────────────────
+
+def test_domain_tls_cache_roundtrip(db):
+    assert db.get_domain_tls("evil.example") is None
+    info = {"issuer": "Let's Encrypt", "san_count": 2, "verify_failed": False,
+            "fail_reason": None, "not_before": "2026-06-01T00:00:00+00:00"}
+    db.cache_domain_tls("evil.example", info)
+    cached = db.get_domain_tls("evil.example")
+    assert cached["info"] == info
+    assert cached["fetched_at"]
+
+def test_domain_tls_negative_cache_stores_null(db):
+    db.cache_domain_tls("dead.example", None)
+    cached = db.get_domain_tls("dead.example")
+    assert cached["info"] is None
+    assert cached["fetched_at"]
+
+def test_domain_tls_cache_upsert(db):
+    db.cache_domain_tls("evil.example", None)
+    db.cache_domain_tls("evil.example", {"issuer": "X", "san_count": 1,
+                                         "verify_failed": True, "fail_reason": "expired",
+                                         "not_before": None})
+    assert db.get_domain_tls("evil.example")["info"]["issuer"] == "X"

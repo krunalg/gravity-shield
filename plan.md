@@ -306,7 +306,7 @@ sudo sqlite3 /etc/pihole/gravity.db \
 
 ## Test Coverage
 
-Current suite: 180 tests.
+Current suite: 199 tests.
 
 Covered areas:
 
@@ -322,6 +322,8 @@ Covered areas:
 - TI block expiry (last_seen refresh on re-listing, comment-prefix-guarded removal, disable with 0)
 - shared-hosting detection (PSL private section parsing/sync, full-hostname feed blocks, watcher popularity bypass, brand detection on user label)
 - ASN reputation (ASN-DROP parsing/sync, Team Cymru lookup, StateDB cache, rule weight, watcher fail-open)
+- TLS certificate analysis (opt-in default off, verify-failure signal, cert-age weight, cache, fail-open)
+- legacy block migration into the Adaptive Threat Blocklist group (idempotent, `make migrate-blocks`)
 - watcher skip policy
 - queue-based enqueue and drop-when-full behavior
 - rule pre-filter (low-score domains skip LLM)
@@ -335,10 +337,5 @@ Covered areas:
 
 ## Future Work
 
-- TLS certificate analysis — feasible but opt-in only: grabbing certs means
-  connecting to suspected malicious hosts from the home IP. If added: python
-  `ssl` cert fetch, 3-5s timeout, LLM-path domains only, config flag default
-  off
 - dashboard for classification history
-- migration command for historical AI/TI blocks into `Adaptive Threat Blocklist`
 - configurable custom allowlist/blocklist import

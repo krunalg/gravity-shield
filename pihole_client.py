@@ -104,6 +104,36 @@ class PiholeClient:
             logger.debug("No new domains were added to denylist")
         return added
 
+    def migrate_legacy_blocks_to_group(self) -> int:
+        """Assign existing AI:/TI: denylist rows to the Adaptive Threat Blocklist
+        group. One-off migration for installs that predate group assignment;
+        safe to re-run."""
+        migrated = 0
+        conn = None
+        try:
+            conn = sqlite3.connect(self._db_path)
+            group_id = self._ensure_block_group(conn, int(time.time()))
+            if group_id is None:
+                logger.error("Migration aborted: block group unavailable")
+                return 0
+            rows = conn.execute(
+                """SELECT id FROM domainlist
+                   WHERE type=1 AND (comment LIKE 'AI:%' OR comment LIKE 'TI:%')"""
+            ).fetchall()
+            for (domain_id,) in rows:
+                self._assign_domain_to_group(conn, domain_id, group_id)
+                migrated += 1
+            conn.commit()
+            logger.info(f"Migrated {migrated} legacy AI:/TI: entries into group '{self._block_group_name}'")
+        except Exception as e:
+            logger.error(f"Legacy block migration failed: {e}", exc_info=True)
+        finally:
+            if conn:
+                conn.close()
+        if migrated > 0:
+            self._schedule_reload()
+        return migrated
+
     def remove_from_denylist(self, domains: list[str], comment_prefix: str = "TI:") -> int:
         """Remove domains this daemon added (matched by comment prefix). Returns count removed.
 

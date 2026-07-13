@@ -98,7 +98,7 @@ def test_classifier_worker_classifies_and_blocks(tmp_path):
     with patch("watcher.get_domain_age_days", return_value=None):
         worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None, tls_info=None)
     state.log_classification.assert_called_once()
     pihole.add_to_denylist.assert_called_once_with([domain], comment="AI:MALWARE:0.95")
 
@@ -176,7 +176,7 @@ def test_classifier_worker_ignores_popularity_for_threat_feed_domain():
     with patch("watcher.get_domain_age_days", return_value=None):
         worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None, tls_info=None)
     pihole.add_to_denylist.assert_called_once()
 
 
@@ -198,7 +198,7 @@ def test_classifier_worker_passes_rdap_age_to_classifier():
         worker._handle_domain(domain)
 
     age.assert_called_once_with("paypa1-secure.xyz", state)
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=4, shared_hosting_provider=None, asn_info=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=4, shared_hosting_provider=None, asn_info=None, tls_info=None)
 
 
 def test_classifier_worker_rdap_failure_is_fail_open():
@@ -217,7 +217,7 @@ def test_classifier_worker_rdap_failure_is_fail_open():
     with patch("watcher.get_domain_age_days", side_effect=RuntimeError("rdap down")):
         worker._handle_domain(domain)
 
-    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None)
+    clf.classify.assert_called_once_with(domain, brands=_WORKER_BRANDS, domain_age_days=None, shared_hosting_provider=None, asn_info=None, tls_info=None)
 
 
 def test_classifier_worker_shared_hosting_subdomain_not_popularity_allowed():
@@ -268,6 +268,7 @@ def test_classifier_worker_passes_flagged_asn_to_classifier():
         domain, brands=_WORKER_BRANDS, domain_age_days=None,
         shared_hosting_provider=None,
         asn_info={"asn": 205112, "flagged": True},
+        tls_info=None,
     )
 
 
@@ -292,4 +293,69 @@ def test_classifier_worker_asn_failure_is_fail_open():
         domain, brands=_WORKER_BRANDS, domain_age_days=None,
         shared_hosting_provider=None,
         asn_info=None,
+        tls_info=None,
     )
+
+
+def test_classifier_worker_tls_disabled_by_default():
+    """TLS analysis connects to suspect hosts from the home IP — opt-in only."""
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(domain, "SAFE", 0.9, "ok", False)
+    state = _make_worker_state()
+    pihole = MagicMock()
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.get_domain_age_days", return_value=None), \
+         patch("watcher.get_domain_asn", return_value=None), \
+         patch("watcher.get_cert_info") as tls:
+        worker._handle_domain(domain)
+
+    tls.assert_not_called()
+    assert clf.classify.call_args.kwargs["tls_info"] is None
+
+
+def test_classifier_worker_passes_tls_info_when_enabled():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(domain, "PHISHING", 0.95, "bad cert", True)
+    state = _make_worker_state()
+    pihole = MagicMock()
+    pihole.add_to_denylist.return_value = 1
+    tls_info = {"verify_failed": True, "fail_reason": "self-signed", "issuer": None,
+                "san_count": 0, "cert_age_days": None, "not_before": None}
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.TLS_ANALYSIS_ENABLED", True), \
+         patch("watcher.get_domain_age_days", return_value=None), \
+         patch("watcher.get_domain_asn", return_value=None), \
+         patch("watcher.get_cert_info", return_value=tls_info):
+        worker._handle_domain(domain)
+
+    assert clf.classify.call_args.kwargs["tls_info"] == tls_info
+
+
+def test_classifier_worker_tls_failure_is_fail_open():
+    from classifier import ClassificationResult
+    clf = MagicMock()
+    domain = "paypa1-secure.xyz"
+    clf.classify.return_value = ClassificationResult(domain, "SAFE", 0.9, "ok", False)
+    state = _make_worker_state()
+    pihole = MagicMock()
+
+    q = queue.Queue()
+    worker = ClassifierWorker(classify_queue=q, classifier=clf,
+                              state_db=state, pihole_client=pihole)
+    with patch("watcher.TLS_ANALYSIS_ENABLED", True), \
+         patch("watcher.get_domain_age_days", return_value=None), \
+         patch("watcher.get_domain_asn", return_value=None), \
+         patch("watcher.get_cert_info", side_effect=RuntimeError("tls broke")):
+        worker._handle_domain(domain)
+
+    assert clf.classify.call_args.kwargs["tls_info"] is None

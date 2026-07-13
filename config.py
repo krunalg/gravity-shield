@@ -47,6 +47,16 @@ UPSTREAM_DNS_SERVER = "1.1.1.1"  # resolve directly upstream, never through Pi-h
 ASN_LOOKUP_TIMEOUT = 3           # seconds, per DNS query
 ASN_CACHE_DAYS = 7               # domain→ASN cache TTL (hosting moves, positives expire too)
 ASN_DROP_WEIGHT = 60             # rule weight: domain hosted in a DROP-listed ASN
+
+# ── TLS certificate analysis ──────────────────────────────────────────────────
+# OPT-IN ONLY: fetching a certificate opens a TCP connection to the suspected
+# malicious host from this machine's IP. Runs only on the watcher LLM path.
+TLS_ANALYSIS_ENABLED = False
+TLS_TIMEOUT = 4                  # seconds, per handshake
+TLS_CACHE_DAYS = 7               # domain→cert cache TTL (successes and failures)
+TLS_INVALID_WEIGHT = 20          # rule weight: certificate failed verification
+TLS_NEW_CERT_DAYS = 14           # certs younger than this add TLS_NEW_CERT_WEIGHT
+TLS_NEW_CERT_WEIGHT = 10         # weak signal — Let's Encrypt rotates every ~60-90d
 # User seed for providers the PSL private section does not (yet) list.
 # Same pattern as EXTRA_BRANDS: data-driven primary source + small local seed.
 EXTRA_SHARED_HOSTING_SUFFIXES = {

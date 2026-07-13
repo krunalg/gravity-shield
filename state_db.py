@@ -4,6 +4,7 @@ try:
 except ImportError:
     pass
 
+import json
 import sqlite3
 import threading
 from contextlib import suppress
@@ -75,6 +76,11 @@ class StateDB:
             CREATE TABLE IF NOT EXISTS domain_asn (
                 domain TEXT PRIMARY KEY,
                 asn INTEGER,
+                fetched_at TEXT NOT NULL
+            );
+            CREATE TABLE IF NOT EXISTS domain_tls (
+                domain TEXT PRIMARY KEY,
+                info TEXT,
                 fetched_at TEXT NOT NULL
             );
             CREATE TABLE IF NOT EXISTS sync_log (
@@ -356,6 +362,29 @@ class StateDB:
                    ON CONFLICT(domain) DO UPDATE SET
                      asn=excluded.asn, fetched_at=excluded.fetched_at""",
                 (domain, asn, _now())
+            )
+
+    # ── TLS cert cache ────────────────────────────────────────────────────────
+
+    def get_domain_tls(self, domain: str) -> dict | None:
+        cur = self._conn().execute(
+            "SELECT info, fetched_at FROM domain_tls WHERE domain=?", (domain,)
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        info = json.loads(row["info"]) if row["info"] is not None else None
+        return {"info": info, "fetched_at": row["fetched_at"]}
+
+    def cache_domain_tls(self, domain: str, info: dict | None):
+        conn = self._conn()
+        with conn:
+            conn.execute(
+                """INSERT INTO domain_tls (domain, info, fetched_at)
+                   VALUES (?,?,?)
+                   ON CONFLICT(domain) DO UPDATE SET
+                     info=excluded.info, fetched_at=excluded.fetched_at""",
+                (domain, json.dumps(info) if info is not None else None, _now())
             )
 
     # ── sync log ──────────────────────────────────────────────────────────────
